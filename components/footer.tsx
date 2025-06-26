@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getFooterRes } from '../helper';
 import { FooterProps, Entry, Links } from "../typescript/layout";
 
+
 export default function Footer({ footer, entries }: { footer: FooterProps, entries: Entry[] }) {
 
   const [getFooter, setFooter] = useState(footer);

@@ -10,20 +10,40 @@ import { createTheme } from '@mui/material/styles';
 import 'nprogress/nprogress.css';
 import '../styles/third-party.css';
 import '../styles/style.css';
-// import 'react-loading-skeleton/dist/skeleton.css';
-// import '@contentstack/live-preview-utils/dist/main.css';
 import '../src/app/globals.css';
 import type { AppProps } from 'next/app';
 import { Props } from "../typescript/pages";
-import { EntryData } from "../typescript/layout"; // Make sure this import exists
+import { EntryData, PageProps, Posts } from "../typescript/layout";
 
-// Create a theme
 const theme = createTheme({
   palette: {
     primary: { main: '#1976d2' },
     secondary: { main: '#f50057' },
   },
 });
+
+const emptyPage: PageProps = {
+  locale: '',
+  page_components: [],
+  uid: '',
+  url: '',
+  title: '',
+  seo: {},
+};
+
+const emptyPost: Posts = {
+  locale: '',
+  author: [],
+  body: '',
+  date: '',
+  featured_image: null,
+  is_archived: false,
+  related_post: [],
+  seo: {},
+  url: '',
+  title: '',
+  _owner: {},
+};
 
 export default function App(props: AppProps & Props & { entries: EntryData[] }) {
   const { Component, pageProps, header, footer, entries } = props;
@@ -69,7 +89,7 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
 
   const blogList = posts?.concat(archivePost) || [];
 
-  if (isInsideContentful === null) return null; // Optional: loader can go here
+  if (isInsideContentful === null) return null;
 
   if (isInsideContentful) {
     return (
@@ -95,9 +115,9 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
       <Layout
         header={header}
         footer={footer}
-        page={page}
-        blogPost={blogPost}
-        blogList={blogList}
+        page={page || emptyPage}
+        blogPost={blogPost || emptyPost}
+        blogList={blogList || []}
         entries={entries}
       >
         <ThemeProvider theme={theme}>
@@ -116,8 +136,7 @@ App.getInitialProps = async (appContext: any) => {
   const header = await getHeaderResponse();
   const footer = await getFooterRes();
   const rawEntries = await getAllEntries();
-
-  const entriesList = rawEntries.map((entry) => entry.fields); // Flatten entries
+  const entriesList = rawEntries.map((entry) => entry.fields);
 
   return { ...appProps, header, footer, entries: entriesList };
 };

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { locations } from '@contentful/app-sdk';
 import ConfigScreen from '@/components/locations/ConfigScreen';
 import Field from '@/components/locations/Field';
@@ -20,6 +20,22 @@ const ComponentLocationSettings = {
 };
 
 const App = () => {
+  const [isInsideContentful, setIsInsideContentful] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const inside = window.self !== window.top;
+    setIsInsideContentful(inside);
+  }, []);
+
+  if (isInsideContentful === null) {
+    return null; // Optionally render a loader
+  }
+
+  if (!isInsideContentful) {
+    return <p>This app only works inside Contentful.</p>;
+  }
+
+  // useSDK only runs if inside Contentful
   const sdk = useSDK();
 
   const Component = useMemo(() => {
@@ -28,6 +44,7 @@ const App = () => {
         return component;
       }
     }
+    return null;
   }, [sdk.location]);
 
   return Component ? <Component /> : null;

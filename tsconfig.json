@@ -41,7 +41,7 @@
     "**/*.tsx",
     "next-env.d.ts",
     ".next/types/**/*.ts"
-  ],
+, "pages/api/generate-summary.js"  ],
   "exclude": [
     "node_modules"
   ]
