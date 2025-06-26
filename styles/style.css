@@ -1,0 +1,135 @@
+@import "./json-preview.css";
+@import "./tool-tip.css";
+@import "./demo.css";
+
+/* Custom CSS Variables */
+:root {
+  --body-bg-color: #F7F9FC;
+  --link-color: #6C5CE7;
+  --blue-color: #6C5CE7;
+  --border-color: #DDE3EE;
+  --dark-gray-color: #475161;
+  --dark-black-color: #222222;
+  --light-gray-color: #767676;
+}
+
+/* Body Styling */
+body.body-main {
+  @apply text-[14px] m-0 leading-[22px] bg-[var(--body-bg-color)];
+}
+
+/* Heading Styles */
+h1,
+h2,
+h3,
+h4 {
+  @apply font-bold tracking-[0.2px];
+}
+
+h3 {
+  @apply text-[20px] text-[var(--dark-gray-color)];
+}
+
+header {
+  @apply relative top-0 z-[99] border-b;
+  border-color: var(--border-color);
+}
+
+/* Header Title */
+body header.header h1 {
+  @apply text-[20px] leading-[30px];
+}
+
+/* Primary Button */
+button.primary-button {
+  @apply px-4 py-2 border rounded text-[16px] font-bold ml-[10px] flex gap-x-3;
+  @apply border-[var(--blue-color)] text-[var(--blue-color)] bg-white;
+}
+
+button.primary-button:hover,
+button.primary-button.active {
+  @apply bg-[var(--blue-color)] text-white;
+}
+
+button.primary-button:hover svg path {
+  fill: white
+}
+
+/* Drag Box */
+.drag-box {
+  @apply text-[20px] leading-[30px] font-bold text-[var(--dark-gray-color)];
+}
+
+.drag-box span {
+  @apply block text-[14px] font-normal;
+}
+
+/* Input */
+.form-control.url-input {
+  @apply w-[400px];
+}
+
+/* Checkbox Form */
+.form-check {
+  @apply mt-[12px] mb-[12px] text-[13px] font-medium;
+}
+
+.form-check .form-check-label {
+  @apply flex items-center;
+}
+
+.form-check .form-check-input {
+  @apply w-[20px] h-[20px] mr-[10px] -mt-[2px];
+}
+
+/* Content Box Title */
+.content-box h2 {
+  @apply text-[14px] font-bold leading-[20px] text-[var(--dark-gray-color)];
+}
+
+
+
+/* Generate Content Labels */
+.genrate-content label {
+  @apply text-[13px] font-semibold;
+}
+
+.genrate-content label span.req {
+  @apply text-[13px] font-normal text-[var(--light-gray-color)];
+}
+
+/* Label Bar */
+.label-bar {
+  @apply flex justify-between items-center;
+}
+
+.label-bar button {
+  @apply text-[13px] font-normal px-[5px] text-[var(--blue-color)];
+}
+
+.label-bar button:hover {
+  @apply underline;
+}
+
+/* OR Divider */
+.or-divider {
+  @apply text-[14px] flex items-center text-[var(--light-gray-color)];
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: "";
+  @apply flex-1 border-l border-[var(--border-color)];
+}
+
+.or-divider span {
+  @apply mx-2;
+}
+
+.new-page h2{
+  @apply text-[14px] font-bold leading-[20px] text-[var(--dark-gray-color)];
+}
+ 
+.new-page p{
+  @apply text-[13px] font-normal leading-[20px];
+}

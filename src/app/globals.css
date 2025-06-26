@@ -1,0 +1,6 @@
+/* 
+https://v3.tailwindcss.com/docs/guides/nextjs 
+*/
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
