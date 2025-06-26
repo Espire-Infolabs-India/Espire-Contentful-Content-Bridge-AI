@@ -1,6 +1,5 @@
 import { IncomingForm } from "formidable";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import axios from "axios";
@@ -15,27 +14,11 @@ export const config = {
 
 const isVercel = process.env.VERCEL === "1";
 const uploadsDir = isVercel ? "/tmp" : path.join(process.cwd(), "uploads");
-
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 async function readPDFContent(filePath) {
   const dataBuffer = fs.readFileSync(filePath);
-  const options = {
-    pagerender: async (pageData) => {
-      const textContent = await pageData.getTextContent();
-      let lastY, text = "";
-      for (const item of textContent.items) {
-        if (lastY === item.transform[5] || !lastY) {
-          text += item.str;
-        } else {
-          text += "\n" + item.str;
-        }
-        lastY = item.transform[5];
-      }
-      return text;
-    },
-  };
-  const data = await pdfParse(dataBuffer, options);
+  const data = await pdfParse(dataBuffer);
   return data.text;
 }
 
@@ -44,10 +27,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const form = new IncomingForm({
-    uploadDir: uploadsDir,
-    keepExtensions: true,
-  });
+  const form = new IncomingForm({ uploadDir: uploadsDir, keepExtensions: true });
 
   form.parse(req, async (err, fields, files) => {
     if (err) {
@@ -55,10 +35,15 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Failed to parse form data" });
     }
 
-    const templateName = fields?.template;
+    const templateName = fields?.template?.toString();
     const selectedModel = fields?.model?.toString().toLowerCase() || "gpt-3.5-turbo";
-    const url = fields?.url;
+    const url = fields?.url?.toString();
     const file = Array.isArray(files.pdf) ? files.pdf[0] : files.pdf;
+
+    console.log("Received template:", templateName);
+    console.log("Selected model:", selectedModel);
+    console.log("URL provided:", url);
+    console.log("File provided:", file);
 
     if ((!file && !url) || (file && url)) {
       return res.status(400).json({ error: "Provide either a PDF or a URL, not both" });
@@ -66,71 +51,54 @@ export default async function handler(req, res) {
 
     try {
       const spaceId = process.env.CONTENTFUL_SPACE_ID;
+      const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
       const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN;
 
-      const templateConfig = {
-        method: "GET",
-        url: `https://api.contentful.com/spaces/${spaceId}/content_types/${templateName}`,
-        headers: {
-          Authorization: `Bearer ${managementToken}`,
-          "Content-Type": "application/json",
-        },
-      };
+      console.log(`Fetching content type '${templateName}' from environment '${environmentId}'`);
 
-      const response = await axios(templateConfig);
-      const schemas = response?.data?.fields;
-
-      let refrerenceFieldsList = [];
-      let getReferenceFieldsAsync = async (entryName, displayName, actual_uid) => {
-        let getEntries = await fetch(
-          `${process?.env?.BASE_URL}/api/get-content-entries/?content_name=${entryName}`
-        );
-        let getEntriesData = await getEntries.json();
-        if (getEntriesData) {
-          refrerenceFieldsList.push({
-            displayName,
-            key: entryName,
-            values: getEntriesData?.entries,
-            actual_uid,
-          });
+      const templateResponse = await axios.get(
+        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${templateName}`,
+        {
+          headers: {
+            Authorization: `Bearer ${managementToken}`,
+          },
         }
-      };
+      );
 
+      const schemas = templateResponse?.data?.fields;
+      console.log("Fetched content type fields:", schemas);
+
+      const referenceFieldsList = [];
+      const fileFieldList = [];
+      const fieldsToGenerate = [];
+      const keyMap = {};
+
+      // Process fields
       await Promise.all(
         schemas?.map(async (field) => {
+          if (!field?.id) return;
+
+          keyMap[field.id] = field.name || field.id;
+          fieldsToGenerate.push({ id: field.id, name: field.name, type: field.type });
+
           if (field?.type === "Link" && field?.linkType === "Entry") {
-            let entryName = field?.validations?.find((v) => v.linkContentType)?.linkContentType?.[0];
-            let displayName = field?.name;
-            let actual_uid = field?.id;
+            const entryName = field?.validations?.find((v) => v.linkContentType)?.linkContentType?.[0];
             if (entryName) {
-              return await getReferenceFieldsAsync(entryName, displayName, actual_uid);
+              const getEntries = await fetch(
+                `${process.env.BASE_URL}/api/get-content-entries/?content_name=${entryName}`
+              );
+              const getEntriesData = await getEntries.json();
+              referenceFieldsList.push({ displayName: field.name, key: entryName, values: getEntriesData?.entries, actual_uid: field.id });
             }
+          }
+
+          if (field?.type === "Link" && field?.linkType === "Asset") {
+            fileFieldList.push({ displayName: field.name, actual_key: field.id });
           }
         })
       );
 
-      let fileFieldList = [];
-      let templateFields = [];
-      schemas?.forEach((field) => {
-        if (field?.type === "Text" && field?.name && field?.validations?.some((v) => v.size)) {
-          templateFields.push({
-            [field.id]: field?.name,
-          });
-        } else if (field?.type === "File") {
-          fileFieldList.push({ displayName: field?.name, actual_key: field?.id });
-        }
-      });
-
-      let tempTemplateFields = [];
-      schemas?.forEach((field) => {
-        if (field?.type === "Text") {
-          tempTemplateFields.push({
-            key: field.id,
-            value: field.name,
-          });
-        }
-      });
-
+      // Prepare document content
       let truncatedContent = "";
       if (file?.mimetype === "application/pdf") {
         const filePath = file.filepath;
@@ -141,24 +109,23 @@ export default async function handler(req, res) {
         truncatedContent = url;
       }
 
-      const instructions = Prompt?.instructions || [];
-      const promptText = Prompt?.promptText || "";
-
       const prompt = `
-        ${promptText}
+${Prompt?.promptText || ""}
+  
+Instructions:
+${(Prompt?.instructions || []).join("\n")}
 
-        Instructions:
-        ${instructions.join("\n")}
+Fields to generate:
+${JSON.stringify(fieldsToGenerate, null, 2)}
 
-        Fields to generate:
-        ${JSON.stringify(templateFields, null, 2)}
+Document:
+${truncatedContent}
+`;
 
-        Document:
-        ${truncatedContent}
-      `;
+      console.log("Prompt sent to model:", prompt);
 
+      // AI Call
       let rawOutput = "";
-
       if (selectedModel.includes("gemini")) {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: selectedModel });
@@ -175,37 +142,35 @@ export default async function handler(req, res) {
         rawOutput = result.choices[0].message.content.replace(/^```json\n|```$/g, "").trim();
       }
 
-      let parsed;
+      console.log("Raw model output:", rawOutput);
+
+      let parsedOutput;
       try {
         const parsedTemp = JSON.parse(rawOutput);
-        const keyMap = Object.fromEntries(
-          tempTemplateFields.map(({ key, value }) => [key, value])
-        );
-        parsed = parsedTemp?.map((obj) => {
-          const [oldKey] = Object.keys(obj);
-          const newKey = keyMap[oldKey] || oldKey;
-          return {
-            [newKey]: obj[oldKey],
-            actual_key: oldKey,
-            key: newKey,
-            value: obj[oldKey],
-          };
-        });
+
+        if (typeof parsedTemp !== "object" || parsedTemp === null) {
+          throw new Error("Model output is not valid JSON");
+        }
+
+        parsedOutput = Object.entries(parsedTemp).map(([key, value]) => ({
+          key: keyMap[key] || key,
+          actual_key: key,
+          value,
+        }));
       } catch (jsonErr) {
         console.error("Failed to parse model output:", jsonErr);
         return res.status(500).json({ error: "Model returned invalid JSON" });
       }
 
-      res.status(200).json({
-        referenceFields: refrerenceFieldsList,
+      return res.status(200).json({
+        referenceFields: referenceFieldsList,
         fileFieldList,
-        summary: JSON.stringify(parsed, null, 2),
+        summary: parsedOutput,
       });
+
     } catch (error) {
       console.error("Handler error:", error?.response?.data || error.message);
-      return res.status(500).json({
-        error: error.message || "Unexpected server error",
-      });
+      return res.status(500).json({ error: error.message || "Unexpected server error" });
     }
   });
 }

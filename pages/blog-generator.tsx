@@ -1,71 +1,7 @@
-// import { useState } from 'react';
-// import { TextInput, Button, Textarea, Heading, Paragraph, Flex, Card } from '@contentful/f36-components';
-// import Head from 'next/head';
-
-// export default function BlogGeneratorPage() {
-//   const [url, setUrl] = useState('');
-//   const [generatedContent, setGeneratedContent] = useState('');
-//   const [loading, setLoading] = useState(false);
-
-//   const handleGenerate = async () => {
-//     if (!url) return;
-//     setLoading(true);
-
-//     try {
-//       const response = await fetch('/api/generate-blog', {
-//         method: 'POST',
-//         body: JSON.stringify({ url }),
-//         headers: { 'Content-Type': 'application/json' },
-//       });
-
-//       const data = await response.json();
-//       setGeneratedContent(data.blog || 'Failed to generate content');
-//     } catch (err) {
-//       console.error(err);
-//       setGeneratedContent('Error generating content');
-//     }
-
-//     setLoading(false);
-//   };
-
-//   return (
-//     <>
-//       <Head>
-//         <title>AI Blog Generator</title>
-//       </Head>
-
-//       <Flex flexDirection="column" alignItems="center" padding="spacingL" gap="spacingM" style={{ maxWidth: '800px', margin: '0 auto' }}>
-//         <Heading>AI Blog Generator</Heading>
-//         <Paragraph>Enter a URL below and let AI generate a blog post for you.</Paragraph>
-
-//         <TextInput
-//           placeholder="Paste URL here"
-//           value={url}
-//           onChange={(e) => setUrl(e.target.value)}
-//           style={{ width: '100%' }}
-//         />
-
-//         <Button variant="primary" isDisabled={loading} onClick={handleGenerate}>
-//           {loading ? 'Generating...' : 'Generate Blog'}
-//         </Button>
-
-//         {generatedContent && (
-//           <Card style={{ marginTop: '1rem', width: '100%' }}>
-//             <div style={{ padding: '1rem' }}>
-//               <Heading>Generated Blog:</Heading>
-//               <Textarea rows={15} value={generatedContent} isDisabled style={{ width: '100%' }} />
-//             </div>
-//           </Card>
-//         )}
-//       </Flex>
-//     </>
-//   );
-// }
-
-import MyDocument from "./_document";
 "use client";
 import { useEffect, useRef, useState, FormEvent } from "react";
 import axios from "axios";
+import MyDocument from "./_document";
 interface FormField {
   name: string;
   value: string;
@@ -252,7 +188,7 @@ const handleFileUpload = async (file: File, inputId: string) => {
     };
 
     const assetResponse = await axios.post(
-      `https://api.contentful.com/spaces/${process.env.CONTENTFUL_SPACE_ID}/environments/${process.env.CONTENTFUL_ENVIRONMENT || 'master'}/assets`,
+      `https://api.contentful.com/spaces/${process.env.CONTENTFUL_SPACE_ID}/environments/${process.env.CONTENTFUL_ENVIRONMENT || 'dev'}/assets`,
       assetPayload,
       {
         headers: {
