@@ -9,8 +9,7 @@ import { ThemeProvider, CssBaseline } from '@mui/material';
 import { createTheme } from '@mui/material/styles';
 import 'nprogress/nprogress.css';
 import '../styles/third-party.css';
-import '../styles/style.css';
-import '../src/app/globals.css';
+import '../styles/globals.css';
 import type { AppProps } from 'next/app';
 import { Props } from "../typescript/pages";
 import { EntryData, PageProps, Posts } from "../typescript/layout";
@@ -103,12 +102,12 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
   return (
     <>
       <Head>
-        <meta name="application-name" content="Contentstack-Nextjs-Starter-App" />
+        <meta name="application-name" content="Contentfull-Nextjs-Starter-App" />
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1" />
         <meta name="theme-color" content="#317EFB" />
-        <title>Contentstack-Nextjs-Starter-App</title>
+        <title>Contentful-Nextjs-Starter-App</title>
         {page?.seo && page.seo.enable_search_indexing && metaData(page.seo)}
       </Head>
 

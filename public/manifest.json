@@ -4,9 +4,9 @@
     "display": "standalone",
     "scope": "/",
     "start_url": "/",
-    "name": "Contentstack-Nextjs-Starter-App",
+    "name": "Contentfull-Nextjs-Starter-App",
     "short_name": "Starter-App",
-    "description": "Starter app for nextjs and contentstack integration",
+    "description": "Starter app for nextjs and Contentfull integration",
     "icons": [
         {
             "src": "/icon/icon-192x192.png",
