@@ -1,23 +1,21 @@
 import axios from "axios";
 
 export default async function handler(req, res) {
-  const contentName = req?.query?.content_name;
+  const contentType = req?.query?.content_type;
 
-  if (!contentName) {
-    return res.status(400).json({ error: "Missing 'content_name' parameter" });
+  if (!contentType) {
+    return res.status(400).json({ error: "Missing 'content_type' parameter" });
   }
 
-  const spaceId = process.env.CONTENTFUL_SPACE_ID;
-  const accessToken = process.env.CONTENTFUL_ACCESS_TOKEN;
-  const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
+  const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+  const accessToken = process.env.NEXT_PUBLIC_CONTENTFUL_DELIVERY_TOKEN;
+  const environmentId = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
 
   if (!spaceId || !accessToken) {
     return res.status(500).json({ error: "Missing Contentful credentials" });
   }
 
   try {
-    console.log(`Fetching entries for Content Type: ${contentName}`);
-
     const url = `https://cdn.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries`;
 
     const response = await axios.get(url, {
@@ -25,11 +23,11 @@ export default async function handler(req, res) {
         Authorization: `Bearer ${accessToken}`,
       },
       params: {
-        content_type: contentName,
+        content_type: contentType,
       },
     });
 
-    console.log(`Fetched ${response?.data?.items?.length || 0} entries for ${contentName}`);
+    console.log(`Fetched ${response?.data?.items?.length || 0} entries for ${contentType}`);
 
     return res.status(200).json({ entries: response.data.items });
   } catch (error) {

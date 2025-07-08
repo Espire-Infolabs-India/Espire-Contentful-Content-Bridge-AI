@@ -60,9 +60,11 @@ export default async function handler(req, res) {
       const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
       const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN;
 
-      console.log(
-        `Fetching content type '${templateName}' from environment '${environmentId}'`
-      );
+      if (!process.env.BASE_URL) {
+        throw new Error("Missing BASE_URL in environment");
+      }
+
+      console.log("Fetching content type:", templateName);
 
       const templateResponse = await axios.get(
         `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${templateName}`,
@@ -81,7 +83,6 @@ export default async function handler(req, res) {
       const fieldsToGenerate = [];
       const keyMap = {};
 
-      // Process fields
       await Promise.all(
         schemas?.map(async (field) => {
           if (!field?.id) return;
@@ -119,13 +120,12 @@ export default async function handler(req, res) {
         })
       );
 
-      // Prepare document content
       let truncatedContent = "";
       if (file?.mimetype === "application/pdf") {
         const filePath = file.filepath;
         const pdfContent = await readPDFContent(filePath);
         truncatedContent = pdfContent.slice(0, 30000);
-        fs.unlink(filePath, () => {});
+        fs.unlink(filePath, () => { });
       } else if (url) {
         truncatedContent = url;
       }
@@ -135,13 +135,17 @@ ${Prompt.promptText}
 
 Instructions:
 ${Prompt.instructions.join("\n")}
+7. For any fields of type RichText (e.g., description, content), only return plain text without formatting or JSON structure.
 
-Fields to generate (id and type only):
-${JSON.stringify(
-  fieldsToGenerate.map((f) => ({ id: f.id, type: f.type })),
-  null,
-  2
-)}
+Fields to generate:
+${fieldsToGenerate
+          .map((f) => {
+            if (f.type === "RichText") {
+              return `${f.id} (plain text only)`;
+            }
+            return `${f.id} (${f.type})`;
+          })
+          .join("\n")}
 
 Document:
 ${truncatedContent}
@@ -149,7 +153,6 @@ ${truncatedContent}
 
       console.log("Prompt sent to model:", prompt);
 
-      // AI Call
       let rawOutput = "";
       if (selectedModel.includes("gemini")) {
         const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -172,7 +175,7 @@ ${truncatedContent}
           .trim();
       }
 
-      console.log("Raw model output:", rawOutput);
+      console.log("⚡ Raw AI Output BEFORE PARSE:", rawOutput);
 
       let parsedOutput;
       try {
@@ -185,8 +188,8 @@ ${truncatedContent}
         parsedOutput = Object.entries(parsedTemp).map(([key, fieldValue]) => {
           const value =
             typeof fieldValue === "object" &&
-            fieldValue !== null &&
-            "value" in fieldValue
+              fieldValue !== null &&
+              "value" in fieldValue
               ? fieldValue.value
               : fieldValue ?? "";
 
@@ -201,11 +204,12 @@ ${truncatedContent}
         return res.status(500).json({ error: "Model returned invalid JSON" });
       }
 
-      return res.status(200).json({
-        referenceFields: referenceFieldsList,
-        fileFieldList,
-        summary: parsedOutput,
-      });
+     return res.status(200).json({
+  referenceFields: referenceFieldsList,
+  fileFieldList: fileFieldList,
+  summary: parsedOutput,
+  allowedFields: fieldsToGenerate.map(f => f.id),  // Send only allowed field ids
+});
     } catch (error) {
       console.error("Handler error:", error?.response?.data || error.message);
       return res

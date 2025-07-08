@@ -1,30 +1,34 @@
 "use client";
 import { useEffect, useRef, useState, FormEvent } from "react";
 import axios from "axios";
-import '@/styles/globals.css'
-import MyDocument from "./_document";
-interface FormField {
-  name: string;
-  value: string;
+import { createContentfulEntry } from "./api/create-entry";
+
+interface Field {
+  key: string;
+  actual_key: string;
+  value: any;
 }
 
 export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [entryId, setEntryId] = useState<string | null>(null);
+  const [entryVersion, setEntryVersion] = useState<number | null>(null);
   const [fileName, setFileName] = useState<string>("");
   const [fileSize, setFileSize] = useState<number>(0);
-
+  const [uploadedImageId, setUploadedImageId] = useState<string>("");
   const [template, setTemplate] = useState<string>("author");
   const [url, setURL] = useState<string>("");
-
   const [successMsg, setSuccessMsg] = useState<boolean>(false);
   const [result, setResult] = useState<any>(null);
   const [referenceFields, setReferenceFields] = useState<any>(null);
   const [fileFieldList, setFileFieldList] = useState<any>(null);
   const [contentTypeResult, setContentTypeResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [authors, setAuthors] = useState<{ id: string; name: string }[]>([]);
+  const imageAssetIdRef = useRef<string | null>(null);
+  const [selectedAuthor, setSelectedAuthor] = useState("");
   const [aiModel, setAIModel] = useState<string>("gemini-2.0-flash");
-
   const [firstPage, setFirstPage] = useState(true);
   const [secondPage, setSecondPage] = useState(false);
   const [uploadedDetails, setUploadedDetails] = useState(false);
@@ -71,7 +75,18 @@ export default function HomePage() {
       }
     };
 
+    async function loadAuthors() {
+      try {
+        const res = await fetch("/api/fetch-authors");
+        if (!res.ok) throw new Error("Failed to fetch authors");
+        const data = await res.json();
+        setAuthors(data);
+      } catch (error) {
+        console.error("Error loading authors:", error);
+      }
+    }
     fetchData();
+    loadAuthors();
   }, []);
 
   const handleFileSelect = (file: File) => {
@@ -111,21 +126,49 @@ export default function HomePage() {
     }
 
     try {
-      const res = await fetch(
-        `${window?.location?.origin}/api/generate-summary`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const res = await fetch(`${window?.location?.origin}/api/generate-summary`, {
+        method: "POST",
+        body: formData,
+      });
+
       if (!res.ok) throw new Error("Failed to generate content");
+
       const data = await res.json();
       setSecondPage(false);
       setFirstPage(false);
 
-      setResult(data?.summary);
+      const filteredSummary = Array.isArray(data?.summary)
+        ? data.summary.filter(
+          (item: { actual_key: string }) =>
+            item.actual_key?.toLowerCase() !== "image" &&
+            item.actual_key?.toLowerCase() !== "author"
+        )
+        : data?.summary;
+      setResult(filteredSummary);
       setReferenceFields(data?.referenceFields);
       setFileFieldList(data?.fileFieldList);
+
+      // ✅ Auto-upload AI Image if provided
+      if (data?.image?.url && !imageAssetIdRef.current) {
+        try {
+          const imageUrl = data.image.url;
+          const imageFetch = await fetch(imageUrl);
+          const imageBlob = await imageFetch.blob();
+          const imageFile = new File([imageBlob], "ai-generated-image.jpg", { type: imageBlob.type });
+          const assetId = await handleFileUpload(imageFile, "image");
+
+          if (assetId) {
+            if (!imageAssetIdRef.current) {
+              setUploadedImageId(assetId);
+              imageAssetIdRef.current = assetId;
+            }
+          } else {
+            console.warn("⚠️ Failed to upload AI-generated image");
+          }
+        } catch (err) {
+          console.error("❌ Error uploading AI image to Contentful:", err);
+        }
+      }
     } catch (err) {
       setFirstPage(true);
       console.error(err);
@@ -135,51 +178,82 @@ export default function HomePage() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLoading(true);
-    const input = e.target as HTMLInputElement;
-    const inputId = input.id;
-    const file = e.target.files?.[0];
-
-    if (file) {
-      handleFileUpload(file, inputId);
+  const publishToCMS = async () => {
+    if (!entryId || !entryVersion) {
+      alert("No draft entry found to publish. Please save as draft first.");
+      return;
+    }
+    try {
+      setLoading(true);
+      const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+      const environmentId = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+      const managementToken = process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+      const publishResponse = await axios.put(
+        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${managementToken}`,
+            "X-Contentful-Version": entryVersion,
+          },
+        }
+      );
+      console.log("✅ Entry published successfully:", publishResponse.data);
+      alert("Entry successfully published to Contentful!");
+    } catch (err) {
+      console.error("Publish error:", err);
+      alert("Failed to publish to CMS.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleFileUpload = async (file: File, inputId: string) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
+    const input = e.target as HTMLInputElement;
+    console.log("💡 Raw input ID:", input.id);
+    // Make sure to remove both _file or _input if present
+    const inputId = input.id.replace("_file", "").replace("_input", "");
+    const file = e.target.files?.[0];
 
+    if (file) {
+      console.log("⏩ Starting manual file upload for:", file.name);
+      const assetId = await handleFileUpload(file, inputId);
+
+      if (inputId === "image" && assetId) {
+        imageAssetIdRef.current = assetId;
+        setUploadedImageId(assetId);
+      } else if (inputId === "image" && !assetId) {
+        console.log("❌ Image upload failed, no asset ID received.");
+      }
+    }
+    setLoading(false);
+  };
+
+  const handleFileUpload = async (file: File, inputId: string): Promise<string | null> => {
+    setLoading(true);
     try {
-      // Step 1: Upload file to Contentful's upload endpoint
       const uploadResponse = await axios.post(
-        `https://upload.contentful.com/spaces/${process.env.CONTENTFUL_SPACE_ID}/uploads`,
+        `https://upload.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/uploads`,
         file,
         {
           headers: {
-            Authorization: `Bearer ${process.env.CONTENTFUL_MANAGEMENT_TOKEN}`,
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN}`,
             "Content-Type": "application/octet-stream",
           },
         }
       );
 
       const uploadId = uploadResponse.data.sys.id;
-
-      // Step 2: Create an asset referencing the uploaded file
       const assetPayload = {
         fields: {
-          title: {
-            "en-US": file.name,
-          },
+          title: { "en-US": file.name },
           file: {
             "en-US": {
               fileName: file.name,
               contentType: file.type || "application/octet-stream",
               uploadFrom: {
-                sys: {
-                  type: "Link",
-                  linkType: "Upload",
-                  id: uploadId,
-                },
+                sys: { type: "Link", linkType: "Upload", id: uploadId },
               },
             },
           },
@@ -187,11 +261,7 @@ export default function HomePage() {
       };
 
       const assetResponse = await axios.post(
-        `https://api.contentful.com/spaces/${
-          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${
-          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
-        }/assets`,
+        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets`,
         assetPayload,
         {
           headers: {
@@ -201,114 +271,248 @@ export default function HomePage() {
         }
       );
 
-      const uploadedAsset = assetResponse.data;
-      const assetId = uploadedAsset.sys.id;
-
-      // Step 3 (Optional but recommended): Publish the asset
+      const assetId = assetResponse.data.sys.id;
+      const assetVersion = assetResponse.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${
-          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${
-          "dev"
-          // process.env.CONTENTFUL_ENVIRONMENT || "dev"
-        }/assets/${assetId}/published`,
+        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}/files/en-US/process`,
         {},
         {
           headers: {
             Authorization: `Bearer ${process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN}`,
+            "X-Contentful-Version": assetVersion,
+          },
+        }
+      );
+      let processed = false;
+      let retries = 10;
+      let check: any = null;
+      while (!processed && retries > 0) {
+        await new Promise((res) => setTimeout(res, 2000));
+
+        check = await axios.get(
+          `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN}`,
+            },
+          }
+        );
+
+        if (check.data.fields?.file?.["en-US"]?.url) {
+          console.log("✅ Asset processing complete, URL:", check.data.fields.file["en-US"].url);
+          processed = true;
+        }
+        retries--;
+      }
+      if (!processed) {
+        console.error("❌ Asset processing timed out");
+        setLoading(false);
+        return null;
+      }
+      const finalVersion = check.data.sys.version;
+      console.log("✅ Final Asset Version before publish:", finalVersion);
+      await axios.put(
+        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}/published`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN}`,
+            "X-Contentful-Version": finalVersion,
           },
         }
       );
 
-      // Step 4: Set uploaded asset ID in your input
-      const inputEl = document.getElementById(`${inputId}_file`);
-      if (inputEl && "value" in inputEl) {
-        (inputEl as HTMLInputElement).value = assetId;
-      }
-
       setLoading(false);
+      return assetId;
     } catch (err: any) {
-      console.error("Upload failed:", err.response?.data || err.message);
+      console.error("❌ Upload failed:", err.response?.data || err.message);
       setLoading(false);
+      return null;
     }
   };
-  console.log("AI result before submit:", result);
-  const handleSubmit = async () => {
+  const allowedFields = [
+    "dataSourceName",
+    "title",
+    "description",
+    "content",
+    "url",
+    "publishDate",
+    "tags",
+    "author",
+    "image",
+  ];
+  const handleSubmit = async (publish: boolean) => {
     try {
       setLoading(true);
-
-      // A) Gather only TEXTAREA content
-      const data: Record<string, any> = {};
-
-      // 1️⃣ Textareas
+      const fieldsToSend: Field[] = [];
+      // 1️⃣ Textareas (description, content, others)
       document
         .querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea")
         .forEach((t) => {
           if (t.name && t.value) {
-            data[t.name] = { "en-US": t.value };
+            if (t.name === "description" || t.name === "content") return;
+            fieldsToSend.push({
+              key: t.name,
+              actual_key: t.name,
+              value: t.value,
+            });
           }
         });
-
-      // 2️⃣ Reference dropdowns
+      // 2️⃣ Dropdowns
       document
         .querySelectorAll<HTMLSelectElement>("select.form-dropdown")
         .forEach((s) => {
           if (s.name && s.value) {
-            data[s.name] = {
-              "en-US": [
-                { sys: { type: "Link", linkType: "Entry", id: s.value } },
-              ],
-            };
+            // Fields that are references
+            const entryReferences = ["author"];
+            //const assetReferences = ["image"];
+            const assetReferences: string[] = [];
+            if (entryReferences.includes(s.name)) {
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: {
+                  sys: { id: s.value, linkType: "Entry", type: "Link" },
+                },
+              });
+            } else if (assetReferences.includes(s.name)) {
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: {
+                  sys: { id: s.value, linkType: "Asset", type: "Link" },
+                },
+              });
+            } else {
+              // Plain text for Symbol/Date fields
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: s.value,
+              });
+            }
           }
         });
-
-      // 3️⃣ AI-generated fields
+      // 3️⃣ AI Generated Fields (Filtered)
       if (Array.isArray(result)) {
         result.forEach((item) => {
-          if (item.actual_key) {
-            let val = item.value;
-
-            // If field is rich text JSON, convert to string
-            if (typeof val === "object" && val !== null) {
-              val = JSON.stringify(val);
+          if (
+            !item.actual_key ||
+            item.value === undefined ||
+            item.value === null ||
+            !allowedFields.includes(item.actual_key)
+          )
+            return;
+          let finalValue = item.value;
+          if (item.actual_key === "description" || item.actual_key === "content") {
+            if (typeof item.value === "object" && item.value?.nodeType === "document") {
+              finalValue = item.value;
+            } else {
+              finalValue = {
+                nodeType: "document",
+                data: {},
+                content: [
+                  {
+                    nodeType: "paragraph",
+                    data: {},
+                    content: [
+                      {
+                        nodeType: "text",
+                        value: String(item.value || "").trim(),
+                        marks: [],
+                        data: {},
+                      },
+                    ],
+                  },
+                ],
+              };
             }
-
-            data[item.actual_key] = { "en-US": val };
           }
+
+          if (item.actual_key === "tags" && Array.isArray(item.value)) {
+            finalValue = item.value.join(", ");
+          }
+          fieldsToSend.push({
+            key: item.actual_key,
+            actual_key: item.actual_key,
+            value: finalValue,
+          });
         });
       }
 
-      console.log("Final payload:", data);
-
-      // D) Call Contentful
-      const response = await axios.post(
-        `https://api.contentful.com/spaces/${
-          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${"dev"}/entries`,
-        { fields: data },
-        {
-          headers: {
-            Authorization: `Bearer ${"process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN"}`,
-            "X-Contentful-Content-Type": template,
-            "Content-Type": "application/vnd.contentful.management.v1+json",
+      // 4️⃣ Author Field
+      if (selectedAuthor) {
+        fieldsToSend.push({
+          key: "author",
+          actual_key: "author",
+          value: {
+            sys: { id: selectedAuthor, linkType: "Entry", type: "Link" },
           },
+        });
+      }
+      // 5️⃣ Image Field
+      if (uploadedImageId) {
+        fieldsToSend.push({
+          key: "image",
+          actual_key: "image",
+          value: {
+            sys: { id: uploadedImageId, linkType: "Asset", type: "Link" },
+          },
+        });
+      } else {
+        console.warn("⚠️ No uploadedImageId found, image field will be empty.");
+      }
+      // Step 1: Create entry
+      const entry = await createContentfulEntry(fieldsToSend, template, publish);
+
+      if (!entry?.sys?.id || !entry?.sys?.version) {
+        console.error("❌ Entry creation failed or invalid response:", entry);
+        throw new Error("Entry creation failed or invalid response.");
+      }
+      setEntryId(entry.sys.id);
+      setEntryVersion(entry.sys.version);
+      // Step 2: Publish entry if requested
+      if (publish) {
+        const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+        const environmentId =
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+        const managementToken =
+          process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+
+        if (!spaceId || !environmentId || !managementToken) {
+          throw new Error("Missing Contentful environment variables.");
         }
-      );
-      console.log("Submit response:", response.data);
+
+        const publishResponse = await axios.put(
+          `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entry.sys.id}/published`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${managementToken}`,
+              "X-Contentful-Version": entry.sys.version,
+            },
+          }
+        );
+
+        console.log("✅ Entry published successfully:", publishResponse.data);
+        alert("Entry successfully published to Contentful!");
+      } else {
+        console.log("✅ Entry saved as draft:", entry);
+        alert("Entry saved as draft in Contentful.");
+      }
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
-        console.error("Submit error:", err.response?.data || err.message);
+        console.error("❌ Submit error:", err.response?.data || err.message);
       } else if (err instanceof Error) {
-        console.error("Submit error:", err.message);
+        console.error("❌ Submit error:", err.message);
       } else {
-        console.error("Submit error:", String(err));
+        console.error("❌ Submit error:", String(err));
       }
       alert("One or more uploads failed.");
     } finally {
       setLoading(false);
     }
   };
-
   const renderResult = () => {
     if (!result) return null;
 
@@ -387,40 +591,27 @@ export default function HomePage() {
             ))}
           </div>
 
-          <div className="my-2">
-            {referenceFields?.map((item: any, index: number) => (
-              <div
-                key={index}
-                className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
-              >
-                <label className="mb-2 pl-2">
-                  <strong>
-                    {item?.displayName} <span className="req">(Required)</span>
-                  </strong>
-                </label>
-                <select
-                  name={item?.actual_uid}
-                  id={item?.key}
-                  className="form-select form-dropdown form-textarea"
-                >
-                  <option value="">Choose...</option>
-                  {item?.values?.map((ele: any, ind: number) =>
-                    ele?.title ? (
-                      <option key={ind} value={ele?.uid}>
-                        {ele?.title}
-                      </option>
-                    ) : null
-                  )}
-                </select>
-              </div>
-            ))}
+          <div className="form-group">
+            <label htmlFor="author">Author</label>
+            <select
+              id="author"
+              className="form-control"
+              value={selectedAuthor}
+              onChange={(e) => setSelectedAuthor(e.target.value)}
+            >
+              <option value="">Select Author</option>
+              {authors.map((author) => (
+                <option key={author.id} value={author.id}>
+                  {author.name}
+                </option>
+              ))}
+            </select>
           </div>
-
           <div className="mb-4 flex justify-end bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg">
             <button
               type="button"
               className="primary-button"
-              onClick={handleSubmit}
+              onClick={() => handleSubmit(false)}
               disabled={loading}
             >
               <svg
@@ -447,8 +638,8 @@ export default function HomePage() {
             </button>
             <button
               className="primary-button active"
-              onClick={handleSubmit}
-              disabled={loading}
+              disabled={!result || !selectedAuthor || loading}
+              onClick={publishToCMS}
             >
               <svg
                 width="22"
@@ -462,7 +653,7 @@ export default function HomePage() {
                   fill="white"
                 />
               </svg>
-              Publish to CMS
+              {loading ? "Publishing..." : "Publish to CMS"}
             </button>
           </div>
         </form>
@@ -471,7 +662,6 @@ export default function HomePage() {
             Successfully Created Entry.
           </div>
         )}
-
         {sucessPage && (
           <div className="new-page">
             <div className="bg-white flex items-center space-x-4 border-[var(--border-color)] border-t-[1px] rounded-t-lg border-l-[1px] border-r-[1px] border-b-[1px] p-4">
@@ -747,7 +937,6 @@ export default function HomePage() {
           </div>
         </div>
       )}
-
       {renderResult()}
     </div>
   );
