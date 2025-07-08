@@ -1,27 +1,48 @@
-import axios from 'axios';
+import axios from "axios";
 
 export default async function handler(req, res) {
-    try {
-        const spaceId = process.env.CONTENTFUL_SPACE_ID;
-        const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN;
+  try {
+    const spaceId = process.env.CONTENTFUL_SPACE_ID;
+    const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN;
+    const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
 
-        const response = await axios.get(
-            `https://api.contentful.com/spaces/${spaceId}/content_types`,
-            {
-                headers: {
-                    Authorization: `Bearer ${managementToken}`,
-                    'Content-Type': 'application/json',
-                },
-            }
-        );
+    const response = await axios.get(
+      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types`,
+      {
+        headers: {
+          Authorization: `Bearer ${managementToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-        res.status(200).json(response.data);
+    // const contentTypes = response.data.items?.map((item) => ({
+    //   uid: item.sys.id,
+    //   title: item.name,
+    //   options: { is_page: true }, // or set your own logic based on item
+    // }));
 
-    } catch (error) {
-        console.error('Error fetching Content Types:', error.response?.data || error.message);
-        res.status(error.response?.status || 500).json({
-            error: error.message,
-            details: error.response?.data || null,
-        });
-    }
+      // ✅ Allowed Content Types
+const allowedContentTypeIds = ["componentBlogPostAi", "landingPage", "blogLandingPage"]; // Replace with your real IDs
+
+// ✅ Filter to only allowed content types
+const contentTypes = response.data.items
+  ?.filter((item) => allowedContentTypeIds.includes(item.sys.id))
+  .map((item) => ({
+    uid: item.sys.id,
+    title: item.name,
+    options: { is_page: true },
+  }));
+
+    res.status(200).json({ content_types: contentTypes });
+  } catch (error) {
+    console.error(
+      "Error fetching Content Types:",
+      error.response?.data || error.message
+    );
+    res.status(error.response?.status || 500).json({
+      error: error.message,
+      details: error.response?.data || null,
+    });
+  }
 }
