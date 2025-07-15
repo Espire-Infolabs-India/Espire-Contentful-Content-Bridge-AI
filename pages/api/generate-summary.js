@@ -44,11 +44,6 @@ export default async function handler(req, res) {
     const url = fields?.url?.toString();
     const file = Array.isArray(files.pdf) ? files.pdf[0] : files.pdf;
 
-    console.log("Received template:", templateName);
-    console.log("Selected model:", selectedModel);
-    console.log("URL provided:", url);
-    console.log("File provided:", file);
-
     if ((!file && !url) || (file && url)) {
       return res
         .status(400)
@@ -60,12 +55,6 @@ export default async function handler(req, res) {
       const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
       const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN;
 
-      if (!process.env.BASE_URL) {
-        throw new Error("Missing BASE_URL in environment");
-      }
-
-      console.log("Fetching content type:", templateName);
-
       const templateResponse = await axios.get(
         `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${templateName}`,
         {
@@ -76,56 +65,94 @@ export default async function handler(req, res) {
       );
 
       const schemas = templateResponse?.data?.fields;
-      console.log("Fetched content type fields:", schemas);
-
       const referenceFieldsList = [];
       const fileFieldList = [];
       const fieldsToGenerate = [];
       const keyMap = {};
+      const nestedReferenceSchemas = {};
 
-      await Promise.all(
-        schemas?.map(async (field) => {
-          if (!field?.id) return;
+      for (const field of schemas) {
+        if (!field?.id) continue;
 
-          keyMap[field.id] = field.name || field.id;
-          fieldsToGenerate.push({
-            id: field.id,
-            name: field.name,
-            type: field.type,
-          });
+        keyMap[field.id] = field.name || field.id;
+        fieldsToGenerate.push({
+          id: field.id,
+          name: field.name,
+          type: field.type,
+        });
 
-          if (field?.type === "Link" && field?.linkType === "Entry") {
-            const entryName = field?.validations?.find((v) => v.linkContentType)
-              ?.linkContentType?.[0];
-            if (entryName) {
-              const getEntries = await fetch(
-                `${process.env.BASE_URL}/api/get-content-entries/?content_name=${entryName}`
-              );
-              const getEntriesData = await getEntries.json();
-              referenceFieldsList.push({
-                displayName: field.name,
-                key: entryName,
-                values: getEntriesData?.entries,
-                actual_uid: field.id,
-              });
-            }
-          }
+        if (
+          field?.type === "Array" &&
+          field?.items?.type === "Link" &&
+          field.items.linkType === "Entry"
+        ) {
+          const linkedContentType =
+            field.items.validations?.[0]?.linkContentType?.[0];
 
-          if (field?.type === "Link" && field?.linkType === "Asset") {
-            fileFieldList.push({
-              displayName: field.name,
-              actual_key: field.id,
+          if (linkedContentType) {
+            // fetch schema of nested referenced type (e.g., componentProductBanner)
+            const nestedSchemaResponse = await axios.get(
+              `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${linkedContentType}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${managementToken}`,
+                },
+              }
+            );
+
+            const nestedFields = nestedSchemaResponse?.data?.fields?.map(
+              (nestedField) => ({
+                id: nestedField.id,
+                name: nestedField.name,
+                type: nestedField.type,
+              })
+            );
+
+            nestedReferenceSchemas[field.id] = {
+              contentType: linkedContentType,
+              fields: nestedFields,
+            };
+
+            fieldsToGenerate.push({
+              id: field.id,
+              name: field.name,
+              type: "NestedArray",
+              children: nestedFields,
             });
           }
-        })
-      );
+        }
+
+        if (field?.type === "Link" && field?.linkType === "Entry") {
+          const entryName = field?.validations?.find((v) => v.linkContentType)
+            ?.linkContentType?.[0];
+          if (entryName) {
+            const getEntries = await fetch(
+              `${process.env.BASE_URL}/api/get-content-entries/?content_name=${entryName}`
+            );
+            const getEntriesData = await getEntries.json();
+            referenceFieldsList.push({
+              displayName: field.name,
+              key: entryName,
+              values: getEntriesData?.entries,
+              actual_uid: field.id,
+            });
+          }
+        }
+
+        if (field?.type === "Link" && field?.linkType === "Asset") {
+          fileFieldList.push({
+            displayName: field.name,
+            actual_key: field.id,
+          });
+        }
+      }
 
       let truncatedContent = "";
       if (file?.mimetype === "application/pdf") {
         const filePath = file.filepath;
         const pdfContent = await readPDFContent(filePath);
         truncatedContent = pdfContent.slice(0, 30000);
-        fs.unlink(filePath, () => { });
+        fs.unlink(filePath, () => {});
       } else if (url) {
         truncatedContent = url;
       }
@@ -139,19 +166,23 @@ ${Prompt.instructions.join("\n")}
 
 Fields to generate:
 ${fieldsToGenerate
-          .map((f) => {
-            if (f.type === "RichText") {
-              return `${f.id} (plain text only)`;
-            }
-            return `${f.id} (${f.type})`;
-          })
-          .join("\n")}
+  .map((f) => {
+    if (f.type === "NestedArray") {
+      return `${f.id}: Array of objects with fields: ${f.children
+        .map((c) => `${c.id} (${c.type})`)
+        .join(", ")}`;
+    } else if (f.type === "RichText") {
+      return `${f.id} (plain text only)`;
+    }
+    return `${f.id} (${f.type})`;
+  })
+  .join("\n")}
 
 Document:
 ${truncatedContent}
 `;
 
-      console.log("Prompt sent to model:", prompt);
+      console.log("Prompt sent to model:\n", prompt);
 
       let rawOutput = "";
       if (selectedModel.includes("gemini")) {
@@ -180,7 +211,6 @@ ${truncatedContent}
       let parsedOutput;
       try {
         const parsedTemp = JSON.parse(rawOutput);
-
         if (typeof parsedTemp !== "object" || parsedTemp === null) {
           throw new Error("Model output is not valid JSON");
         }
@@ -188,8 +218,8 @@ ${truncatedContent}
         parsedOutput = Object.entries(parsedTemp).map(([key, fieldValue]) => {
           const value =
             typeof fieldValue === "object" &&
-              fieldValue !== null &&
-              "value" in fieldValue
+            fieldValue !== null &&
+            "value" in fieldValue
               ? fieldValue.value
               : fieldValue ?? "";
 
@@ -204,11 +234,36 @@ ${truncatedContent}
         return res.status(500).json({ error: "Model returned invalid JSON" });
       }
 
-     return res.status(200).json({
+      // Rehydrate nestedSchemas with generated entries
+const hydratedNestedSchemas = {};
+
+for (const key in nestedReferenceSchemas) {
+  const matchingField = parsedOutput.find((f) => f.actual_key === key);
+
+  if (matchingField && Array.isArray(matchingField.value)) {
+    hydratedNestedSchemas[key] = {
+      ...nestedReferenceSchemas[key],
+      entries: matchingField.value.map((entryObj) => ({
+        fields: Object.entries(entryObj).map(([fieldKey, fieldValue]) => ({
+          actual_key: fieldKey,
+          value: fieldValue,
+        })),
+      })),
+    };
+  } else {
+    hydratedNestedSchemas[key] = {
+      ...nestedReferenceSchemas[key],
+      entries: [],
+    };
+  }
+}
+
+return res.status(200).json({
   referenceFields: referenceFieldsList,
   fileFieldList: fileFieldList,
   summary: parsedOutput,
-  allowedFields: fieldsToGenerate.map(f => f.id),  // Send only allowed field ids
+  allowedFields: fieldsToGenerate.map((f) => f.id),
+  nestedSchemas: hydratedNestedSchemas, // ✅ now includes "entries"
 });
     } catch (error) {
       console.error("Handler error:", error?.response?.data || error.message);
