@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, FormEvent } from "react";
 import axios from "axios";
 import { createContentfulEntry } from "./api/create-entry";
+import Settings from "@/components/Settings";
 
 interface Field {
   key: string;
@@ -10,6 +11,17 @@ interface Field {
 }
 
 export default function HomePage() {
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
+  const [assetList, setAssetList] = useState([]);
+  const [targetField, setTargetField] = useState<{
+    key: string;
+    entryIndex: number;
+    fieldKey: string;
+  } | null>(null);
+
+  const [nestedSchemas, setNestedSchemas] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [entryId, setEntryId] = useState<string | null>(null);
@@ -33,7 +45,9 @@ export default function HomePage() {
   const [secondPage, setSecondPage] = useState(false);
   const [uploadedDetails, setUploadedDetails] = useState(false);
   const [sucessPage, setSucessPage] = useState(false);
-
+  const [finalResult, setFinalResult] = useState<any>(null);
+  const [baseUrl, setBaseUrl] = useState<string>("");
+  const [isModalOpen, setModalOpen] = useState(false);
   const setSecond: () => void = () => {
     if (url == "" && fileName == "") {
       alert("Please choose file or enter any url for import.");
@@ -61,6 +75,9 @@ export default function HomePage() {
     setUploadedDetails(val);
   };
 
+  const getAIModel = (e: React.SyntheticEvent) => {
+    setAIModel((e.target as HTMLInputElement).value);
+  };
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -108,7 +125,200 @@ export default function HomePage() {
     const file = e.dataTransfer.files[0];
     if (file) handleFileSelect(file);
   };
+  const showRegeneratePromptPopup = (id: any) => {
+    setModalOpen(true);
+  };
+  const regeneratePrompt = async (id: any, value: any) => {
+    let res = await fetch(
+      `${baseUrl}/api/regenerate-prompt?id=${id}&value=${value}&model=${aiModel}`
+    );
+    if (!res.ok) {
+      return alert(
+        "We encountered an issue while processing your request via the AI API. Kindly try again"
+      );
+    }
 
+    let data = await res.json();
+    let inputEl = document.getElementById(`${id}`) as HTMLInputElement;
+    inputEl.value = data?.title;
+
+    let inputElMessage = document.getElementById(
+      `${id}_message`
+    ) as HTMLInputElement;
+    inputElMessage.innerHTML = "Regenerated Value has been updated.";
+    inputElMessage.classList.remove("hidden");
+    setTimeout(() => {
+      inputElMessage.classList.add("hidden");
+    }, 4000);
+  };
+
+  const regeneratePromptWithText = async (id: any, value: any) => {
+    let res = await fetch(
+      `${baseUrl}/api/regenerate-prompt?id=${id}&value=${value}&model=${aiModel}`
+    );
+    if (!res.ok) {
+      return alert(
+        "We encountered an issue while processing your request via the AI API. Kindly try again"
+      );
+    }
+
+    let data = await res.json();
+    let inputEl = document.getElementById(`${id}`) as HTMLInputElement;
+    inputEl.value = data?.title;
+
+    let inputElMessage = document.getElementById(
+      `${id}_message`
+    ) as HTMLInputElement;
+    inputElMessage.innerHTML = "Regenerated Value has been updated.";
+    inputElMessage.classList.remove("hidden");
+    setTimeout(() => {
+      inputElMessage.classList.add("hidden");
+    }, 4000);
+  };
+  //  Opens the asset picker modal and sets the target field
+  const openImagePicker = async (
+    key: string,
+    entryIndex: number,
+    fieldKey: string
+  ) => {
+    try {
+      console.log("📸 Opening image picker for:", {
+        key,
+        entryIndex,
+        fieldKey,
+      });
+
+      const response = await fetch("/api/fetchAssets");
+      if (!response.ok) throw new Error("Failed to fetch assets");
+
+      const assets = await response.json();
+      setAssetList(assets);
+      setTargetField({ key, entryIndex, fieldKey }); // Sets where to apply selected asset
+      setIsAssetPickerOpen(true);
+    } catch (error) {
+      console.error("Error fetching Contentful assets:", error);
+    }
+  };
+
+  const handleSelectAsset = (asset: {
+    id: string;
+    title: string;
+    url: string;
+  }) => {
+    if (!targetField) {
+      console.warn("❌ No targetField selected.");
+      return;
+    }
+
+    const { key: parentKey, entryIndex, fieldKey } = targetField;
+
+    if (!parentKey || typeof parentKey !== "string") {
+      console.error("❌ Invalid parentKey:", parentKey);
+      return;
+    }
+    //  Update result (main form)
+    setResult((prevResult: any) => {
+      const updated = Array.isArray(prevResult) ? [...prevResult] : [];
+
+      const schemaIndex = updated.findIndex(
+        (item) => item.actual_key === parentKey
+      );
+      if (schemaIndex === -1) {
+        console.warn("⚠️ parentKey not found in result:", parentKey);
+        return prevResult;
+      }
+
+      const schema = updated[schemaIndex];
+      const schemaEntries = Array.isArray(schema.entries)
+        ? [...schema.entries]
+        : [];
+
+      const entry = schemaEntries[entryIndex];
+      if (!entry) {
+        console.warn("⚠️ Entry not found for index:", entryIndex);
+        return prevResult;
+      }
+
+      const updatedFields = Array.isArray(entry.fields)
+        ? [...entry.fields]
+        : [];
+      const fieldIdx = updatedFields.findIndex(
+        (f) => f.actual_key === fieldKey
+      );
+      if (fieldIdx === -1) {
+        console.warn("⚠️ Field key not found:", fieldKey);
+        return prevResult;
+      }
+
+      updatedFields[fieldIdx] = {
+        ...updatedFields[fieldIdx],
+        value: {
+          id: asset.id,
+          title: asset.title,
+          url: asset.url,
+        },
+      };
+
+      const updatedEntry = { ...entry, fields: updatedFields };
+      schemaEntries[entryIndex] = updatedEntry;
+
+      updated[schemaIndex] = { ...schema, entries: schemaEntries };
+      return updated;
+    });
+    //  Also update nestedSchemas
+    setNestedSchemas((prevSchemas: any) => {
+      if (
+        !prevSchemas ||
+        typeof prevSchemas !== "object" ||
+        !(parentKey in prevSchemas)
+      ) {
+        console.warn("⛔ Invalid parentKey in nestedSchemas:", parentKey);
+        return prevSchemas;
+      }
+      const schema = prevSchemas[parentKey];
+      if (!schema) return prevSchemas;
+      const updatedSchema = { ...schema };
+      const updatedEntries = Array.isArray(updatedSchema.entries)
+        ? [...updatedSchema.entries]
+        : [];
+      const entry = updatedEntries[entryIndex];
+      if (!entry) {
+        console.warn(
+          "⚠️ Entry not found in nestedSchemas for index:",
+          entryIndex
+        );
+        return prevSchemas;
+      }
+      const updatedFields = Array.isArray(entry.fields)
+        ? [...entry.fields]
+        : [];
+      const fieldIdx = updatedFields.findIndex(
+        (f) => f.actual_key === fieldKey
+      );
+      if (fieldIdx === -1) {
+        console.warn("⚠️ Field key not found in nestedSchemas:", fieldKey);
+        return prevSchemas;
+      }
+      updatedFields[fieldIdx] = {
+        ...updatedFields[fieldIdx],
+        value: {
+          id: asset.id,
+          title: asset.title,
+          url: asset.url,
+        },
+      };
+      entry.fields = updatedFields;
+      updatedEntries[entryIndex] = entry;
+      updatedSchema.entries = updatedEntries;
+      return {
+        ...prevSchemas,
+        [parentKey]: updatedSchema,
+      };
+    });
+
+    alert(` Selected: ${asset.title}`);
+    setIsAssetPickerOpen(false);
+  };
   const generateContent = async (e: React.SyntheticEvent) => {
     if (!template) return alert("Please select a content type.");
     if ((!selectedFile && !url.trim()) || (selectedFile && url.trim())) {
@@ -126,10 +336,13 @@ export default function HomePage() {
     }
 
     try {
-      const res = await fetch(`${window?.location?.origin}/api/generate-summary`, {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch(
+        `${window?.location?.origin}/api/generate-summary`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
       if (!res.ok) throw new Error("Failed to generate content");
 
@@ -139,22 +352,28 @@ export default function HomePage() {
 
       const filteredSummary = Array.isArray(data?.summary)
         ? data.summary.filter(
-          (item: { actual_key: string }) =>
-            item.actual_key?.toLowerCase() !== "image" &&
-            item.actual_key?.toLowerCase() !== "author"
-        )
+            (item: { actual_key: string }) =>
+              item.actual_key?.toLowerCase() !== "image" &&
+              item.actual_key?.toLowerCase() !== "author"
+          )
         : data?.summary;
       setResult(filteredSummary);
       setReferenceFields(data?.referenceFields);
       setFileFieldList(data?.fileFieldList);
 
-      // ✅ Auto-upload AI Image if provided
+      if (data.nestedSchemas) {
+        setNestedSchemas(data.nestedSchemas);
+      }
+
+      //  Auto-upload AI Image if provided
       if (data?.image?.url && !imageAssetIdRef.current) {
         try {
           const imageUrl = data.image.url;
           const imageFetch = await fetch(imageUrl);
           const imageBlob = await imageFetch.blob();
-          const imageFile = new File([imageBlob], "ai-generated-image.jpg", { type: imageBlob.type });
+          const imageFile = new File([imageBlob], "ai-generated-image.jpg", {
+            type: imageBlob.type,
+          });
           const assetId = await handleFileUpload(imageFile, "image");
 
           if (assetId) {
@@ -177,7 +396,6 @@ export default function HomePage() {
       setLoading(false);
     }
   };
-
   const publishToCMS = async () => {
     if (!entryId || !entryVersion) {
       alert("No draft entry found to publish. Please save as draft first.");
@@ -186,8 +404,10 @@ export default function HomePage() {
     try {
       setLoading(true);
       const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
-      const environmentId = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
-      const managementToken = process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+      const environmentId =
+        process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+      const managementToken =
+        process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
       const publishResponse = await axios.put(
         `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
         {},
@@ -198,7 +418,6 @@ export default function HomePage() {
           },
         }
       );
-      console.log("✅ Entry published successfully:", publishResponse.data);
       alert("Entry successfully published to Contentful!");
     } catch (err) {
       console.error("Publish error:", err);
@@ -207,12 +426,9 @@ export default function HomePage() {
       setLoading(false);
     }
   };
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const input = e.target as HTMLInputElement;
-    console.log("💡 Raw input ID:", input.id);
-    // Make sure to remove both _file or _input if present
     const inputId = input.id.replace("_file", "").replace("_input", "");
     const file = e.target.files?.[0];
 
@@ -230,7 +446,10 @@ export default function HomePage() {
     setLoading(false);
   };
 
-  const handleFileUpload = async (file: File, inputId: string): Promise<string | null> => {
+  const handleFileUpload = async (
+    file: File,
+    inputId: string
+  ): Promise<string | null> => {
     setLoading(true);
     try {
       const uploadResponse = await axios.post(
@@ -261,7 +480,11 @@ export default function HomePage() {
       };
 
       const assetResponse = await axios.post(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets`,
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        }/assets`,
         assetPayload,
         {
           headers: {
@@ -274,7 +497,11 @@ export default function HomePage() {
       const assetId = assetResponse.data.sys.id;
       const assetVersion = assetResponse.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}/files/en-US/process`,
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        }/assets/${assetId}/files/en-US/process`,
         {},
         {
           headers: {
@@ -290,7 +517,11 @@ export default function HomePage() {
         await new Promise((res) => setTimeout(res, 2000));
 
         check = await axios.get(
-          `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}`,
+          `https://api.contentful.com/spaces/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+          }/environments/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+          }/assets/${assetId}`,
           {
             headers: {
               Authorization: `Bearer ${process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN}`,
@@ -299,7 +530,10 @@ export default function HomePage() {
         );
 
         if (check.data.fields?.file?.["en-US"]?.url) {
-          console.log("✅ Asset processing complete, URL:", check.data.fields.file["en-US"].url);
+          console.log(
+            "✅ Asset processing complete, URL:",
+            check.data.fields.file["en-US"].url
+          );
           processed = true;
         }
         retries--;
@@ -310,9 +544,12 @@ export default function HomePage() {
         return null;
       }
       const finalVersion = check.data.sys.version;
-      console.log("✅ Final Asset Version before publish:", finalVersion);
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"}/assets/${assetId}/published`,
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        }/assets/${assetId}/published`,
         {},
         {
           headers: {
@@ -341,11 +578,94 @@ export default function HomePage() {
     "author",
     "image",
   ];
+  const uploadImageToContentful = async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await axios.post("/api/upload-asset", formData);
+    return response.data;
+  };
+
+const handleNestedImageUpload = async (
+  e: React.ChangeEvent<HTMLInputElement>,
+  schemaKey: string,
+  entryIndex: number,
+  fieldKey: string
+) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const previewUrl = URL.createObjectURL(file);
+
+  // Show preview immediately (functional deep update)
+  setNestedSchemas((prev: any) => {
+    const updated = structuredClone(prev); // Use modern deep clone if supported
+    const schema = updated[schemaKey];
+    if (!schema?.entries?.[entryIndex]?.fields) return prev;
+
+    const fields = schema.entries[entryIndex].fields;
+    const field = fields.find((f: any) => f.actual_key === fieldKey);
+    if (!field) return prev;
+
+    field.value = {
+      url: previewUrl,
+      title: file.name + " (preview)",
+    };
+    return updated;
+  });
+  try {
+    const assetId = await handleFileUpload(file, fieldKey);
+    if (!assetId) return;
+
+    const imageUrl = `https://images.ctfassets.net/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/${assetId}`;
+    const imageTitle = file.name;
+
+    // Replace preview with actual Contentful image
+setNestedSchemas((prev: any) => {
+  const updated = structuredClone(prev);
+  const schema = updated[schemaKey];
+  if (!schema || !Array.isArray(schema.entries)) return prev;
+
+  const updatedEntries = schema.entries.map((entry: any, i: number) => {
+    if (i !== entryIndex) return entry;
+
+    const updatedFields = entry.fields.map((field: any) => {
+      if (field.actual_key === fieldKey) {
+        return {
+          ...field,
+          value: {
+            url: imageUrl,
+            title: imageTitle,
+          },
+        };
+      }
+      return field;
+    });
+
+    return {
+      ...entry,
+      fields: updatedFields,
+    };
+  });
+
+  updated[schemaKey] = {
+    ...schema,
+    entries: updatedEntries,
+  };
+  console.log("✅ Final updated nestedSchemas:", updated);
+  return updated;
+});
+    URL.revokeObjectURL(previewUrl); // optional cleanup
+  } catch (err) {
+    console.error("❌ Upload failed", err);
+  }
+};
+
   const handleSubmit = async (publish: boolean) => {
     try {
       setLoading(true);
       const fieldsToSend: Field[] = [];
-      // 1️⃣ Textareas (description, content, others)
+      //Textareas (description, content, others)
       document
         .querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea")
         .forEach((t) => {
@@ -358,14 +678,12 @@ export default function HomePage() {
             });
           }
         });
-      // 2️⃣ Dropdowns
+      // Dropdowns
       document
         .querySelectorAll<HTMLSelectElement>("select.form-dropdown")
         .forEach((s) => {
           if (s.name && s.value) {
-            // Fields that are references
             const entryReferences = ["author"];
-            //const assetReferences = ["image"];
             const assetReferences: string[] = [];
             if (entryReferences.includes(s.name)) {
               fieldsToSend.push({
@@ -384,7 +702,6 @@ export default function HomePage() {
                 },
               });
             } else {
-              // Plain text for Symbol/Date fields
               fieldsToSend.push({
                 key: s.name,
                 actual_key: s.name,
@@ -393,7 +710,7 @@ export default function HomePage() {
             }
           }
         });
-      // 3️⃣ AI Generated Fields (Filtered)
+      //AI Generated Fields (Filtered)
       if (Array.isArray(result)) {
         result.forEach((item) => {
           if (
@@ -404,8 +721,14 @@ export default function HomePage() {
           )
             return;
           let finalValue = item.value;
-          if (item.actual_key === "description" || item.actual_key === "content") {
-            if (typeof item.value === "object" && item.value?.nodeType === "document") {
+          if (
+            item.actual_key === "description" ||
+            item.actual_key === "content"
+          ) {
+            if (
+              typeof item.value === "object" &&
+              item.value?.nodeType === "document"
+            ) {
               finalValue = item.value;
             } else {
               finalValue = {
@@ -440,7 +763,7 @@ export default function HomePage() {
         });
       }
 
-      // 4️⃣ Author Field
+      // Author Field
       if (selectedAuthor) {
         fieldsToSend.push({
           key: "author",
@@ -450,7 +773,7 @@ export default function HomePage() {
           },
         });
       }
-      // 5️⃣ Image Field
+      // Image Field
       if (uploadedImageId) {
         fieldsToSend.push({
           key: "image",
@@ -462,11 +785,79 @@ export default function HomePage() {
       } else {
         console.warn("⚠️ No uploadedImageId found, image field will be empty.");
       }
+
+      const fullyNormalizedSchemas = Array.isArray(result)
+        ? result
+            .map((item, i) => {
+              const raw = item?.value;
+              // Unwrap if value is { en: [...] }
+              const unwrappedValue =
+                raw && typeof raw === "object" && !Array.isArray(raw)
+                  ? Object.values(raw)[0] // grabs the array inside the { en: [...] }
+                  : raw;
+
+              const isArrayOfObjects =
+                Array.isArray(unwrappedValue) &&
+                unwrappedValue.length > 0 &&
+                unwrappedValue.every(
+                  (entry) =>
+                    typeof entry === "object" &&
+                    entry !== null &&
+                    !Array.isArray(entry)
+                );
+
+              console.log(
+                `🧪 [${i}] actual_key: ${
+                  item.actual_key
+                } | typeof raw: ${typeof raw} | isArrayOfObjects: ${isArrayOfObjects}`,
+                unwrappedValue
+              );
+
+              return {
+                ...item,
+                isArrayOfObjects,
+                unwrappedValue,
+              };
+            })
+            .filter((item) => item.isArrayOfObjects)
+            .reduce((acc, item) => {
+              console.log(`🧩 Detected nested array for: ${item.actual_key}`);
+
+              const entries = item.unwrappedValue.map(
+                (entry: any, idx: number) => {
+                  const normalizedFields = Object.entries(entry || {}).map(
+                    ([actual_key, value]) => ({
+                      key: actual_key.replace(/([A-Z])/g, " $1").trim(),
+                      actual_key,
+                      value,
+                    })
+                  );
+
+                  console.log(
+                    `📄 Normalized entry ${idx + 1} for ${item.actual_key}:`,
+                    normalizedFields
+                  );
+
+                  return { fields: normalizedFields };
+                }
+              );
+
+              acc[item.actual_key] = { entries };
+              return acc;
+            }, {} as Record<string, { entries: any[] }>)
+        : {};
+
+      setNestedSchemas(fullyNormalizedSchemas);
+
       // Step 1: Create entry
-      const entry = await createContentfulEntry(fieldsToSend, template, publish);
+      const entry = await createContentfulEntry(
+        fieldsToSend,
+        template,
+        publish,
+        nestedSchemas
+      );
 
       if (!entry?.sys?.id || !entry?.sys?.version) {
-        console.error("❌ Entry creation failed or invalid response:", entry);
         throw new Error("Entry creation failed or invalid response.");
       }
       setEntryId(entry.sys.id);
@@ -493,8 +884,6 @@ export default function HomePage() {
             },
           }
         );
-
-        console.log("✅ Entry published successfully:", publishResponse.data);
         alert("Entry successfully published to Contentful!");
       } else {
         console.log("✅ Entry saved as draft:", entry);
@@ -513,6 +902,30 @@ export default function HomePage() {
       setLoading(false);
     }
   };
+
+  if (Array.isArray(result)) {
+    result.forEach((item, i) => {
+      console.log(
+        `🧪 [${i}] actual_key: ${item.actual_key} | type of value:`,
+        typeof item.value,
+        item.value
+      );
+    });
+  } else {
+    console.warn("⚠️ result is not an array:", result);
+  }
+
+  if (Array.isArray(result)) {
+    result.forEach((item, i) => {
+      console.log(
+        `🧪 [${i}] actual_key: ${item.actual_key} | type of value:`,
+        typeof item.value,
+        item.value
+      );
+    });
+  } else {
+    console.warn("⚠️ result is not an array:", result);
+  }
   const renderResult = () => {
     if (!result) return null;
 
@@ -524,44 +937,331 @@ export default function HomePage() {
         return <div className="alert alert-warning">Invalid result format</div>;
       }
     }
+
     return (
       <div className="genrate-content">
-        <form encType="multipart/form-data" method="post">
-          {json?.map((item: any, index: number) => (
-            <div
-              key={item.actual_key || index}
-              className="mb-4 bg-white border…"
-            >
-              <div className="label-bar">
-                <label htmlFor={item.actual_key} className="mb-2 pl-2">
-                  <strong>
-                    {item.key} <span className="req">(Required)</span>
-                  </strong>
-                </label>
-                <span>
-                  <button type="button">Regenerate</button>
-                  <button type="button">Prompt</button>
-                </span>
+        {/* Regenerate Prompt Modal */}
+        {isModalOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-30 flex justify-center items-center modal-body">
+            <div className="bg-white rounded-lg w-[500px]">
+              <div className="flex justify-between items-center p-4 border-b">
+                <h2 className="text-xl font-bold text-black">Prompt</h2>
+                <button onClick={() => setModalOpen(false)}>X</button>
               </div>
-              <textarea
-                className="form-control form-textarea"
-                id={item.actual_key}
-                name={item.actual_key}
-                defaultValue={
-                  typeof item.value === "object"
-                    ? JSON.stringify(item.value, null, 2)
-                    : item.value || ""
-                }
-                rows={Math.min(
-                  10,
-                  typeof item.value === "string"
-                    ? item.value.split("\n").length + 1
-                    : 4
-                )}
-                style={{ whiteSpace: "pre-wrap" }}
-              />
+
+              <div className="px-4 ">
+                <label className="block mb-1 text-black py-3">
+                  Enter Prompt:
+                </label>
+                <textarea
+                  className="form-control modal-textarea"
+                  placeholder="Enter your prompt here."
+                  defaultValue={""}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 px-4 py-4 border-t mt-4">
+                <button
+                  onClick={() => setModalOpen(false)}
+                  className="primary-button"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => regeneratePromptWithText("id", "value")}
+                  className="primary-button"
+                >
+                  Update Prompt
+                </button>
+              </div>
             </div>
-          ))}
+          </div>
+        )}
+        {/* Regenerate Prompt Modal End */}
+
+        {isAssetPickerOpen && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+            <div className="bg-white w-[90%] md:w-[600px] max-h-[80vh] overflow-y-auto p-6 rounded-lg shadow-lg">
+              <h2 className="text-xl font-semibold mb-4">
+                Select Image from Contentful
+              </h2>
+
+              <div className="grid grid-cols-2 gap-4">
+                {Array.isArray(assetList) &&
+                  assetList
+                    .filter((asset) => asset && typeof asset === "object") // Skip null/undefined
+                    .map((asset: any, index: number) => {
+                      // ✅ Normalize asset values
+                      const assetId =
+                        asset?.id || asset?.sys?.id || `asset-${index}`;
+                      const assetTitle =
+                        asset?.title ||
+                        asset?.fields?.title?.["en-US"] ||
+                        asset?.fields?.title ||
+                        "Untitled";
+
+                      const assetUrl =
+                        asset?.url ||
+                        (asset?.fields?.file?.url &&
+                          `https:${asset.fields.file.url}`) ||
+                        (asset?.fields?.file?.["en-US"]?.url &&
+                          `https:${asset.fields.file["en-US"].url}`);
+
+                      if (!assetUrl) return null; 
+
+                      return (
+                        <div
+                          key={assetId}
+                          className="border p-2 rounded hover:shadow cursor-pointer"
+                          onClick={() =>
+                            handleSelectAsset({
+                              id: assetId,
+                              title: assetTitle,
+                              url: assetUrl,
+                            })
+                          }
+                        >
+                          <img
+                            src={assetUrl}
+                            alt={assetTitle}
+                            className="w-full h-32 object-cover rounded"
+                          />
+                          <p className="text-sm mt-1 truncate text-center">
+                            {assetTitle}
+                          </p>
+                        </div>
+                      );
+                    })}
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  className="secondary-button"
+                  onClick={() => setIsAssetPickerOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <form encType="multipart/form-data" method="post">
+          {json?.map((item: any, index: number) => {
+            const actualKey = item.actual_key;
+            // If it's a referenced component
+            if (nestedSchemas?.hasOwnProperty(actualKey)) {
+              const schema = nestedSchemas[actualKey];
+
+              return (
+                <div
+                  key={`${actualKey}-${index}`}
+                  className="nested-schema-block mb-8"
+                >
+                  <div className="bg-gray-100 border-l-4 border-blue-500 p-2 mb-4">
+                    <h3 className="text-lg font-semibold capitalize text-blue-800">
+                      {actualKey.replace(/([A-Z])/g, " $1")}
+                    </h3>
+                  </div>
+
+                  {Array.isArray(schema.entries) &&
+                  schema.entries.length > 0 ? (
+                    schema.entries
+                      .slice(0, 1)
+                      .map((entry: any, entryIndex: number) => (
+                        <div
+                          key={`${actualKey}-${entryIndex}`}
+                          className="bg-white border p-4 rounded mb-4 shadow"
+                        >
+                          <h4 className="text-md font-bold mb-2">
+                            Entry {entryIndex + 1}
+                          </h4>
+
+                          {Array.isArray(entry.fields) &&
+                          entry.fields.length > 0 ? (
+                            entry.fields.map(
+                              (field: any, fieldIndex: number) => {
+                                const fieldKey = field.actual_key;
+                                const fieldValue = field.value;
+                                const parentKey = actualKey; // assign key from outer scope
+
+                                if (
+                                  typeof fieldValue === "object" &&
+                                  (fieldValue?.url ||
+                                    field.type === "Asset" ||
+                                    true) // <- always allow rendering
+                                ) {
+                                  return (
+                                    <div
+                                      key={`${fieldKey}-${fieldIndex}`}
+                                      className="mb-4"
+                                    >
+                                      <label className="block font-medium mb-1">
+                                        {fieldKey}
+                                      </label>
+                                      {fieldValue?.url ? (
+                                        <>
+                                          <img
+                                            src={fieldValue.url}
+                                            alt={fieldValue.title || fieldKey}
+                                            className="max-w-xs rounded shadow mb-2"
+                                          />
+                                          <p className="text-xs text-gray-400">
+                                            {fieldValue.title ||
+                                              "Image selected"}
+                                          </p>
+                                        </>
+                                      ) : (
+                                        <div className="text-sm text-gray-500 italic">
+                                          No image selected
+                                        </div>
+                                      )}
+
+                                      <input
+                                        type="file"
+                                        name={`${actualKey}[${entryIndex}][${fieldKey}]`}
+                                        accept="image/*"
+                                        className="form-input mt-2"
+                                        onChange={(e) =>
+                                          handleNestedImageUpload(
+                                            e,
+                                            actualKey,
+                                            entryIndex,
+                                            fieldKey
+                                          )
+                                        }
+                                      />
+                                      <button
+                                        type="button"
+                                        className="secondary-button ml-2"
+                                        onClick={() =>
+                                          openImagePicker(
+                                            actualKey,
+                                            entryIndex,
+                                            fieldKey
+                                          )
+                                        }
+                                      >
+                                        Select from Contentful
+                                      </button>
+                                    </div>
+                                  );
+                                }
+
+                                if (
+                                  typeof fieldValue === "object" &&
+                                  typeof fieldValue.url === "string" &&
+                                  typeof fieldValue.title === "string"
+                                ) {
+                                  return (
+                                    <div
+                                      key={`${fieldKey}-${fieldIndex}`}
+                                      className="mb-4"
+                                    >
+                                      <label className="block font-medium mb-1">
+                                        {fieldKey}
+                                      </label>
+                                      <a
+                                        href={fieldValue.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-blue-600 underline"
+                                      >
+                                        {fieldValue.title}
+                                      </a>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div
+                                    key={`${fieldKey}-${fieldIndex}`}
+                                    className="mb-4"
+                                  >
+                                    <label className="block font-medium mb-1">
+                                      {fieldKey}
+                                    </label>
+                                    <textarea
+                                      className="form-control form-textarea"
+                                      name={`${actualKey}[${entryIndex}][${fieldKey}]`}
+                                      defaultValue={
+                                        typeof fieldValue === "object"
+                                          ? JSON.stringify(fieldValue, null, 2)
+                                          : fieldValue || ""
+                                      }
+                                      rows={Math.min(
+                                        10,
+                                        typeof fieldValue === "string"
+                                          ? fieldValue.split("\n").length + 1
+                                          : 4
+                                      )}
+                                    />
+                                  </div>
+                                );
+                              }
+                            )
+                          ) : (
+                            <div className="text-red-600">
+                              No fields found for entry {entryIndex + 1}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                  ) : (
+                    <div className="text-red-600">
+                      No entries found for {actualKey}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            // Root-level field
+            return (
+              <div
+                key={actualKey || index}
+                className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
+              >
+                <div className="label-bar">
+                  <label htmlFor={actualKey} className="mb-2 pl-2">
+                    <strong>
+                      {item.key} <span className="req">(Required)</span>
+                    </strong>
+                  </label>
+                  <span>
+                    <button
+                      type="button"
+                      onClick={() => regeneratePrompt(actualKey, item?.value)}
+                    >
+                      Regenerate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => showRegeneratePromptPopup(actualKey)}
+                    >
+                      Prompt
+                    </button>
+                  </span>
+                </div>
+                <textarea
+                  className="form-control form-textarea"
+                  id={actualKey}
+                  name={actualKey}
+                  defaultValue={
+                    typeof item.value === "object"
+                      ? JSON.stringify(item.value, null, 2)
+                      : item.value || ""
+                  }
+                  rows={Math.min(
+                    10,
+                    typeof item.value === "string"
+                      ? item.value.split("\n").length + 1
+                      : 4
+                  )}
+                  style={{ whiteSpace: "pre-wrap" }}
+                />
+              </div>
+            );
+          })}
 
           <div className="my-2">
             {fileFieldList?.map((item: any, index: number) => (
@@ -701,6 +1401,9 @@ export default function HomePage() {
           onDrop={handleDrop}
           onDragOver={(e) => e.preventDefault()}
         >
+          <div className="flex justify-between w-full items-center">
+            <h1 className="flex items-center">Espire CMS Co-pilot</h1>
+          </div>
           <div className="bg-white border-[var(--border-color)] border-t-[1px] border-l-[1px] border-r-[1px] pb-4 rounded-t-lg">
             <div className="topicon flex justify-center py-4">
               <svg
@@ -725,6 +1428,7 @@ export default function HomePage() {
                   fill-opacity="0.3"
                 />
               </svg>
+              <Settings model={aiModel} setAIModel={getAIModel} />
             </div>
 
             <div className="flex justify-center flex-col md:flex-row py-2">
@@ -938,6 +1642,25 @@ export default function HomePage() {
         </div>
       )}
       {renderResult()}
+
+      {sucessPage && (
+        <div className="new-page">
+          <div className="bg-white flex items-center space-x-4 border-[var(--border-color)] border-t-[1px] rounded-t-lg border-l-[1px] border-r-[1px] border-b-[1px] p-4">
+            <h2>New Page - {finalResult?.entry?.title}</h2>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={setCancel}
+            >
+              New Content
+            </button>
+          </div>
+          <div className="bg-white p-4 border-[var(--border-color)] border-l-[1px] border-b-[1px] border-r-[1px] rounded-b-lg">
+            <p className="mb-4">Url : {finalResult?.entry?.url}</p>
+            <p className="mb-4">Summary: {finalResult?.entry?.summary}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

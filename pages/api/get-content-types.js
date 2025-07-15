@@ -16,14 +16,8 @@ export default async function handler(req, res) {
       }
     );
 
-    // const contentTypes = response.data.items?.map((item) => ({
-    //   uid: item.sys.id,
-    //   title: item.name,
-    //   options: { is_page: true }, // or set your own logic based on item
-    // }));
-
       // ✅ Allowed Content Types
-const allowedContentTypeIds = ["componentBlogPostAi", "landingPage", "blogLandingPage"]; // Replace with your real IDs
+const allowedContentTypeIds = ["componentBlogPostAi","productLandingPage", "landingPage", "blogLandingPage"]; // Replace with your real IDs
 
 // ✅ Filter to only allowed content types
 const contentTypes = response.data.items
