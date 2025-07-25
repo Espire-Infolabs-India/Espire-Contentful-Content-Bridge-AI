@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "contentful-management";
 
 const SPACE_ID = process.env.CONTENTFUL_SPACE_ID!;
-const ENVIRONMENT_ID = process.env.CONTENTFUL_ENVIRONMENT_ID || "master";
+const ENVIRONMENT_ID = process.env.CONTENTFUL_ENVIRONMENT_ID || "dev";
 const CONTENTFUL_MANAGEMENT_TOKEN = process.env.CONTENTFUL_MANAGEMENT_TOKEN!;
 
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
