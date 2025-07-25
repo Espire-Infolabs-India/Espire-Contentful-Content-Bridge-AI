@@ -47,13 +47,15 @@ const emptyPost: Posts = {
 export default function App(props: AppProps & Props & { entries: EntryData[] }) {
   const { Component, pageProps, header, footer, entries } = props;
   const { page, posts, archivePost, blogPost } = pageProps;
+  const [isInsideContentful, setIsInsideContentful] = useState<boolean | null>(null);
   const router = useRouter();
-  const [isInContentful, setIsInContentful] = useState(false);
 
   useEffect(() => {
-    // Detect if inside Contentful iframe
-    setIsInContentful(window.self !== window.top);
+    const inside = window.self !== window.top;
+    setIsInsideContentful(inside);
+  }, []);
 
+  useEffect(() => {
     const handleStart = () => NProgress.start();
     const handleStop = () => NProgress.done();
 
@@ -86,11 +88,24 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
 
   const blogList = posts?.concat(archivePost) || [];
 
-  const AppBody = (
-    <>
+  if (isInsideContentful === null) return null;
+
+  if (isInsideContentful) {
+  return (
+    <SDKProvider>
       <GlobalStyles />
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Component {...pageProps} />
+      </ThemeProvider>
+    </SDKProvider>
+  );
+}
+
+  return (
+    <>
       <Head>
-        <meta name="application-name" content="Contentful-Nextjs-Starter-App" />
+        <meta name="application-name" content="Contentfull-Nextjs-Starter-App" />
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1" />
@@ -114,8 +129,6 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
       </Layout>
     </>
   );
-
-  return isInContentful ? <SDKProvider>{AppBody}</SDKProvider> : AppBody;
 }
 
 App.getInitialProps = async (appContext: any) => {
