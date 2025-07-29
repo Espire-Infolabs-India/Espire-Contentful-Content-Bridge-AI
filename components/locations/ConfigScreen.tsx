@@ -5,7 +5,7 @@ import { css } from 'emotion';
 import { /* useCMA, */ useSDK } from '@contentful/react-apps-toolkit';
 
 export interface AppInstallationParameters {}
-
+// Deepak
 const ConfigScreen = () => {
   const [parameters, setParameters] = useState<AppInstallationParameters>({});
   const sdk = useSDK<ConfigAppSDK>();
