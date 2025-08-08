@@ -9,7 +9,7 @@ interface Field {
   actual_key: string;
   value: any;
 }
-
+let allowedFields: string[] = []; // ✅ Declare here (top of file, shared)
 export default function HomePage() {
   const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
   const [assetList, setAssetList] = useState([]);
@@ -18,7 +18,7 @@ export default function HomePage() {
     entryIndex: number;
     fieldKey: string;
   } | null>(null);
-const [patchedSchemas, setPatchedSchemas] = useState([]);
+  const [patchedSchemas, setPatchedSchemas] = useState([]);
   const [contentTypeSchemas, setContentTypeSchemas] = useState<any[]>([]);
   const [schemas, setSchemas] = useState<any>(null);
   const [showGeneratedResult, setShowGeneratedResult] = useState(false);
@@ -70,9 +70,9 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
     setUploads(false);
     setSucessPage(false);
   };
-    const setSuccess: () => void = () => {
-    setURL('');
-    setFileName('');
+  const setSuccess: () => void = () => {
+    setURL("");
+    setFileName("");
     setFileSize(0);
     setSelectedFile(null);
     setSecondPage(false);
@@ -225,19 +225,40 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
     }
 
     if (entryIndex === -1) {
-      // Handle root-level image field
-      setResult((prevResult: any) => ({
-        ...prevResult,
-        [parentKey]: {
-          id: asset.id,
-          title: asset.title,
-          url: asset.url,
-        },
-      }));
+      // Handle root-level image field in array-based result
+      setResult((prevResult: any[]) =>
+        prevResult.map((item) =>
+          item.actual_key === parentKey
+            ? {
+                ...item,
+                value: {
+                  id: asset.id,
+                  title: asset.title,
+                  url: asset.url,
+                },
+              }
+            : item
+        )
+      );
       setIsAssetPickerOpen(false);
       alert(`Selected: ${asset.title}`);
       return;
     }
+
+    // if (entryIndex === -1) {
+    //   // Handle root-level image field
+    //   setResult((prevResult: any) => ({
+    //     ...prevResult,
+    //     [parentKey]: {
+    //       id: asset.id,
+    //       title: asset.title,
+    //       url: asset.url,
+    //     },
+    //   }));
+    //   setIsAssetPickerOpen(false);
+    //   alert(`Selected: ${asset.title}`);
+    //   return;
+    // }
     // Update result (main form)
     setResult((prevResult: any) => {
       const updated = Array.isArray(prevResult) ? [...prevResult] : [];
@@ -299,9 +320,7 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
         : [];
       const entry = updatedEntries[entryIndex];
       if (!entry) {
-        console.warn(
-          entryIndex
-        );
+        console.warn(entryIndex);
         return prevSchemas;
       }
       const updatedFields = Array.isArray(entry.fields)
@@ -341,17 +360,24 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
       const key = Object.keys(item)[0];
       const label = item[key];
 
-      if (typeof label === "string" && label.startsWith("[") && label.includes("{")) {
-        const nestedFields = [...label.matchAll(/(\w+): \(([^)]+)\)/g)].map(([, id, name]) => ({
-          id,
-          name,
-          type: "Text", // enhance if needed
-        }));
+      if (
+        typeof label === "string" &&
+        label.startsWith("[") &&
+        label.includes("{")
+      ) {
+        const nestedFields = [...label.matchAll(/(\w+): \(([^)]+)\)/g)].map(
+          ([, id, name]) => ({
+            id,
+            name,
+            type: "Text", // enhance if needed
+          })
+        );
 
         result.push({
           id: key,
           name: key,
           type: "Array",
+          helpText: item.helpText || "", // ✅ Add this
           nestedFields,
         });
       } else {
@@ -359,10 +385,34 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
           id: key,
           name: typeof label === "string" ? label.replace(/[()]/g, "") : key,
           type: "Text",
+          helpText: item.helpText || "", // ✅ Add this
         });
       }
     }
     return result;
+  }
+
+  // ✅ Normalize schema to include display_name
+  function enrichSchemaWithDisplayNameAndHelpText(schema: any[]): any[] {
+    return schema.map((field) => {
+      const enrichedField = {
+        ...field,
+        display_name: field.name || field.id,
+        helpText: field.helpText ?? null,
+      };
+
+      if (field.type === "Array" && Array.isArray(field.nestedFields)) {
+        enrichedField.nestedFields = field.nestedFields.map(
+          (nested: { name: any; id: any; helpText: any }) => ({
+            ...nested,
+            display_name: nested.name || nested.id,
+            helpText: nested.helpText ?? null,
+          })
+        );
+      }
+
+      return enrichedField;
+    });
   }
 
   const generateContent = async (e: React.SyntheticEvent) => {
@@ -371,7 +421,6 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
       return alert("Please provide either a PDF file or a URL, but not both.");
     }
     setLoading(true);
-
     try {
       // Get schema from backend
       const schemaRes = await fetch(
@@ -384,12 +433,13 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
         if (field.linkContentType && Array.isArray(field.nestedFields)) {
           const nested = field.nestedFields
             .map((nestedField: any) => {
-              return `${nestedField.id}: (${nestedField.name || nestedField.id
-                })`;
+              return `${nestedField.id}: (${
+                nestedField.name || nestedField.id
+              })`;
             })
             .join(", ");
           return {
-            [field.id]: `[ { ${nested} } ]`, 
+            [field.id]: `[ { ${nested} } ]`,
           };
         }
 
@@ -411,14 +461,20 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
       formData.append("template", template);
       formData.append("model", aiModel);
       console.log("📤 Sending content_type to Azure:", content_type);
-      const normalizedSchema = normalizeSchema(content_type);
+      const normalizedSchema =
+        enrichSchemaWithDisplayNameAndHelpText(schemaFields);
       formData.append("content_type", JSON.stringify(normalizedSchema)); // ✅ fixed!
-
 
       if (selectedFile) {
         formData.append("pdf", selectedFile);
-      } else if (url.trim()) {
+      } else if (typeof url === "string" && url.trim().startsWith("http")) {
+        console.log("📎 URL value being sent:", JSON.stringify(url));
+
         formData.append("url", url.trim());
+      } else {
+        alert("Please provide a valid URL starting with http or https.");
+        setLoading(false);
+        return;
       }
 
       // ✅ 4. Call generate-summary API
@@ -436,32 +492,40 @@ const [patchedSchemas, setPatchedSchemas] = useState([]);
         result,
         referenceFields,
         fileFieldList,
-        allowedFields,
         nestedSchemas,
         contentTypeSchema, // ✅ This will now be available as `data.contentTypeSchema`
       } = data;
 
+      // ✅ Inject linkContentType for known array fields
 
-// ✅ Inject linkContentType for known array fields
-const knownLinkTypes: Record<string, string> = {
-  productBanner: "componentProductBanner",
-};
+      const knownLinkTypes: Record<string, string> = {};
 
-const patchedSchema = (contentTypeSchema || []).map((field: any) => {
-  if (field.type === "Array" && !field.linkContentType) {
-    const inferred = knownLinkTypes[field.id];
-    if (inferred) {
-      return {
-        ...field,
-        linkContentType: inferred,
-      };
-    }
-  }
-  return field;
-});
+      if (nestedSchemas && typeof nestedSchemas === "object") {
+        for (const key in nestedSchemas) {
+          if (nestedSchemas[key]?.contentTypeId) {
+            knownLinkTypes[key] = nestedSchemas[key].contentTypeId;
+          }
+        }
+      }
 
-console.log("🔧 Patched contentTypeSchema:", patchedSchema);
-setPatchedSchemas(patchedSchema);
+      const patchedSchema = (contentTypeSchema || []).map((field: any) => {
+        if (field.type === "Array" && !field.linkContentType) {
+          const inferred = knownLinkTypes[field.id];
+          if (inferred) {
+            return {
+              ...field,
+              linkContentType: inferred,
+            };
+          }
+        }
+        return field;
+      });
+
+      console.log("🔧 Patched contentTypeSchema:", patchedSchema);
+      setPatchedSchemas(patchedSchema);
+
+      allowedFields = patchedSchema.map((f: any) => f.id);
+
       console.log("🎯 generateContent -> API response:", {
         result,
         referenceFields,
@@ -489,7 +553,6 @@ setPatchedSchemas(patchedSchema);
         typeof data.result === "object" &&
         !Array.isArray(data.result)
       ) {
-        
         filteredSummary = Object.entries(data.result)
           .map(([key, rawValue], index) => {
             let value: any = rawValue;
@@ -523,7 +586,7 @@ setPatchedSchemas(patchedSchema);
                 isErrorObject = true;
               }
             } catch (e) {
-              isErrorObject = false; 
+              isErrorObject = false;
             }
 
             const isBadSchema =
@@ -558,8 +621,7 @@ setPatchedSchemas(patchedSchema);
             };
           })
           .filter(Boolean);
-      } 
-      
+      }
 
       if (Array.isArray(filteredSummary) && Array.isArray(schemaFields)) {
         const fieldOrder = schemaFields.map((f: any) => f.id);
@@ -571,43 +633,62 @@ setPatchedSchemas(patchedSchema);
       }
 
       const processedSummary = filteredSummary.map((item) => {
-  const { value } = item;
+        const { value } = item;
 
-  let flatValue = "";
+        let flatValue = "";
 
-  if (typeof value === "string" || typeof value === "number") {
-    flatValue = String(value);
-  } else if (Array.isArray(value)) {
-    flatValue = value
-      .map((v) => {
-        if (typeof v === "string" || typeof v === "number") return v;
-        if (typeof v === "object" && v !== null) {
-          if ("value" in v && typeof v.value === "object") {
-            return Object.values(v.value).join(" | ");
+        if (typeof value === "string" || typeof value === "number") {
+          flatValue = String(value);
+        } else if (Array.isArray(value)) {
+          flatValue = value
+            .map((v) => {
+              if (typeof v === "string" || typeof v === "number") return v;
+              if (typeof v === "object" && v !== null) {
+                if ("value" in v && typeof v.value === "object") {
+                  return Object.values(v.value).join(" | ");
+                }
+                if ("value" in v) return v.value;
+              }
+              return JSON.stringify(v);
+            })
+            .join(", ");
+        } else if (typeof value === "object" && value !== null) {
+          if ("value" in value) {
+            flatValue =
+              typeof value.value === "object"
+                ? Object.values(value.value).join(" | ")
+                : value.value;
+          } else {
+            flatValue = JSON.stringify(value);
           }
-          if ("value" in v) return v.value;
         }
-        return JSON.stringify(v);
-      })
-      .join(", ");
-  } else if (typeof value === "object" && value !== null) {
-    if ("value" in value) {
-      flatValue =
-        typeof value.value === "object"
-          ? Object.values(value.value).join(" | ")
-          : value.value;
-    } else {
-      flatValue = JSON.stringify(value);
-    }
-  }
 
-  return {
-    ...item,
-    value: flatValue,
-  };
-});
+        return {
+          ...item,
+          value: flatValue,
+        };
+      });
 
-setResult(processedSummary);
+      // ✅ Group processed summary by top-level and nested fields
+      const groupedSummary: Record<string, any[]> = {};
+
+      for (const item of processedSummary) {
+        const keyParts = item.actual_key?.split(".");
+        if (keyParts.length === 2) {
+          const [parent, child] = keyParts;
+          if (!groupedSummary[parent]) groupedSummary[parent] = [];
+          groupedSummary[parent].push({
+            ...item,
+            actual_key: child,
+          });
+        } else {
+          if (!groupedSummary["_root"]) groupedSummary["_root"] = [];
+          groupedSummary["_root"].push(item);
+        }
+      }
+
+      setResult(groupedSummary);
+
       setShowGeneratedResult(true);
       setReferenceFields(data?.referenceFields || []);
       setFileFieldList(data?.fileFieldList || []);
@@ -670,35 +751,103 @@ setResult(processedSummary);
   };
 
   const publishToCMS = async () => {
-    if (!entryId || !entryVersion) {
-      alert("No draft entry found to publish. Please save as draft first.");
-      return;
-    }
-    try {
-      setLoading(true);
-      const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
-      const environmentId =
-        process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
-      const managementToken =
-        process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
-      const publishResponse = await axios.put(
-        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${managementToken}`,
-            "X-Contentful-Version": entryVersion,
-          },
+  if (!entryId) {
+    alert("No draft entry found to publish. Please save as draft first.");
+    return;
+  }
+
+  try {
+    setLoading(true);
+
+    const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+    const environmentId =
+      process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+    const managementToken =
+      process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+
+    const headers = {
+      Authorization: `Bearer ${managementToken}`,
+      "Content-Type": "application/json",
+    };
+
+    // 🟡 Step 1: Fetch latest version of main entry
+    const getEntryResponse = await axios.get(
+      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}`,
+      { headers }
+    );
+
+    const entryData = getEntryResponse.data;
+    const latestVersion = entryData.sys.version;
+
+    // 🔍 Step 2: Extract nested entry IDs from fields
+    const nestedEntryIds: string[] = [];
+
+    for (const fieldKey of Object.keys(entryData.fields)) {
+      const value = entryData.fields[fieldKey]["en-US"];
+
+      // Handle single nested entry
+      if (value?.sys?.type === "Link" && value.sys.linkType === "Entry") {
+        nestedEntryIds.push(value.sys.id);
+      }
+
+      // Handle array of nested entries
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item?.sys?.type === "Link" && item.sys.linkType === "Entry") {
+            nestedEntryIds.push(item.sys.id);
+          }
         }
-      );
-      alert("Entry successfully published to Contentful!");
-    } catch (err) {
-      console.error("Publish error:", err);
-      alert("Failed to publish to CMS.");
-    } finally {
-      setLoading(false);
+      }
     }
-  };
+
+    // ✅ Step 3: Publish each nested entry
+    for (const nestedId of nestedEntryIds) {
+      try {
+        const nestedEntryRes = await axios.get(
+          `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}`,
+          { headers }
+        );
+
+        const version = nestedEntryRes.data.sys.version;
+
+        await axios.put(
+          `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}/published`,
+          {},
+          {
+            headers: {
+              ...headers,
+              "X-Contentful-Version": version,
+            },
+          }
+        );
+        console.log(`✅ Nested entry ${nestedId} published`);
+      } catch (nestedErr) {
+        console.warn(`⚠️ Failed to publish nested entry ${nestedId}`, nestedErr);
+      }
+    }
+
+    // 🟢 Step 4: Publish main entry
+    await axios.put(
+      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
+      {},
+      {
+        headers: {
+          ...headers,
+          "X-Contentful-Version": latestVersion,
+        },
+      }
+    );
+
+    alert("✅ Entry and nested entries successfully published to Contentful!");
+  } catch (err: any) {
+    console.error("❌ Publish error:", err?.response?.data || err);
+    alert("❌ Failed to publish to CMS.");
+  } finally {
+    setLoading(false);
+  }
+};
+
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const input = e.target as HTMLInputElement;
@@ -751,8 +900,10 @@ setResult(processedSummary);
       };
 
       const assetResponse = await axios.post(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets`,
         assetPayload,
         {
@@ -766,8 +917,10 @@ setResult(processedSummary);
       const assetId = assetResponse.data.sys.id;
       const assetVersion = assetResponse.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets/${assetId}/files/en-US/process`,
         {},
         {
@@ -784,8 +937,10 @@ setResult(processedSummary);
         await new Promise((res) => setTimeout(res, 2000));
 
         check = await axios.get(
-          `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-          }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+          `https://api.contentful.com/spaces/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+          }/environments/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
           }/assets/${assetId}`,
           {
             headers: {
@@ -805,8 +960,10 @@ setResult(processedSummary);
       }
       const finalVersion = check.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets/${assetId}/published`,
         {},
         {
@@ -824,17 +981,7 @@ setResult(processedSummary);
       return null;
     }
   };
-  const allowedFields = [
-    "dataSourceName",
-    "title",
-    "description",
-    "content",
-    "url",
-    "publishDate",
-    "tags",
-    "author",
-    "image",
-  ];
+
   const handleNestedImageUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
     schemaKey: string,
@@ -857,14 +1004,14 @@ setResult(processedSummary);
       if (!field) return prev;
 
       field.value = {
-  sys: {
-    id: "preview", // or any temporary placeholder
-    type: "Link",
-    linkType: "Asset",
-  },
-  previewUrl, // Optional custom field just for UI preview
-  title: file.name + " (preview)",
-};
+        sys: {
+          id: "preview", // or any temporary placeholder
+          type: "Link",
+          linkType: "Asset",
+        },
+        previewUrl, // Optional custom field just for UI preview
+        title: file.name + " (preview)",
+      };
       return updated;
     });
     try {
@@ -888,13 +1035,12 @@ setResult(processedSummary);
               return {
                 ...field,
                 value: {
-  sys: {
-    id: assetId,
-    linkType: "Asset",
-    type: "Link",
-  },
-}
-
+                  sys: {
+                    id: assetId,
+                    linkType: "Asset",
+                    type: "Link",
+                  },
+                },
               };
             }
             return field;
@@ -918,280 +1064,301 @@ setResult(processedSummary);
     }
   };
 
-const handleSubmit = async (
-  publish: boolean,
-  contentTypeSchemas: any[],
-  contentTypeId: string // ✅ Add this
-) => {
-  try {
-    setLoading(true);
-    let fieldsToSend: Field[] = [];
+  const handleSubmit = async (
+    publish: boolean,
+    contentTypeSchemas: any[],
+    contentTypeId: string // ✅ Add this
+  ) => {
+    try {
+      setLoading(true);
+      let fieldsToSend: Field[] = [];
 
-    // Textareas
-    document.querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea").forEach((t) => {
-      if (t.name && t.value) {
-        if (t.name === "description" || t.name === "content") return;
+      // Textareas
+      document
+        .querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea")
+        .forEach((t) => {
+          if (t.name && t.value) {
+            //if (t.name === "description" || t.name === "content") return;
+            fieldsToSend.push({
+              key: t.name,
+              actual_key: t.name,
+              value: t.value,
+            });
+          }
+        });
+
+      // Dropdowns
+      document
+        .querySelectorAll<HTMLSelectElement>("select.form-dropdown")
+        .forEach((s) => {
+          if (s.name && s.value) {
+            const entryReferences = ["author"];
+            const assetReferences: string[] = [];
+            if (entryReferences.includes(s.name)) {
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: {
+                  sys: { id: s.value, linkType: "Entry", type: "Link" },
+                },
+              });
+            } else if (assetReferences.includes(s.name)) {
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: {
+                  sys: { id: s.value, linkType: "Asset", type: "Link" },
+                },
+              });
+            } else {
+              fieldsToSend.push({
+                key: s.name,
+                actual_key: s.name,
+                value: s.value,
+              });
+            }
+          }
+        });
+
+      // Normalize AI result
+      let safeResult = Array.isArray(result)
+        ? result
+        : Object.entries(result)
+            .filter(([key]) => isNaN(Number(key)))
+            .map(([key, value]) => ({
+              actual_key: key,
+              key,
+              value,
+            }));
+      const nestedKeysInForm = fieldsToSend
+        .map((f) => f.key)
+        .filter((k) => k.includes("["));
+      const topLevelKeysToSkip = new Set(
+        nestedKeysInForm.map((k) => k.split("[")[0]) // Extract parent keys like 'productBanner'
+      );
+      const seenKeys = new Set(fieldsToSend.map((f) => f.key));
+      safeResult = safeResult.filter(
+        (item) => !topLevelKeysToSkip.has(item.key)
+      );
+
+      safeResult.forEach((item) => {
+        const alreadyExists = seenKeys.has(item.actual_key);
+        if (
+          !item.actual_key ||
+          item.value === undefined ||
+          item.value === null ||
+          alreadyExists || // Skip if already exists
+          !allowedFields.includes(item.actual_key)
+        )
+          return;
+        seenKeys.add(item.actual_key);
+
+        let finalValue = item.value;
+
+        if (
+          item.actual_key === "description" ||
+          item.actual_key === "content"
+        ) {
+          if (
+            typeof item.value === "object" &&
+            item.value?.nodeType === "document"
+          ) {
+            finalValue = item.value;
+          } else {
+            finalValue = {
+              nodeType: "document",
+              data: {},
+              content: [
+                {
+                  nodeType: "paragraph",
+                  data: {},
+                  content: [
+                    {
+                      nodeType: "text",
+                      value: String(item.value || "").trim(),
+                      marks: [],
+                      data: {},
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+        }
+
+        if (item.actual_key === "tags" && Array.isArray(item.value)) {
+          finalValue = item.value.join(", ");
+        }
+
         fieldsToSend.push({
-          key: t.name,
-          actual_key: t.name,
-          value: t.value,
+          key: item.actual_key,
+          actual_key: item.actual_key,
+          value: finalValue,
+        });
+      });
+
+      // Author field
+      if (selectedAuthor) {
+        fieldsToSend.push({
+          key: "author",
+          actual_key: "author",
+          value: {
+            sys: { id: selectedAuthor, linkType: "Entry", type: "Link" },
+          },
         });
       }
-    });
 
-    // Dropdowns
-    document.querySelectorAll<HTMLSelectElement>("select.form-dropdown").forEach((s) => {
-      if (s.name && s.value) {
-        const entryReferences = ["author"];
-        const assetReferences: string[] = [];
-        if (entryReferences.includes(s.name)) {
-          fieldsToSend.push({
-            key: s.name,
-            actual_key: s.name,
-            value: {
-              sys: { id: s.value, linkType: "Entry", type: "Link" },
-            },
-          });
-        } else if (assetReferences.includes(s.name)) {
-          fieldsToSend.push({
-            key: s.name,
-            actual_key: s.name,
-            value: {
-              sys: { id: s.value, linkType: "Asset", type: "Link" },
-            },
-          });
-        } else {
-          fieldsToSend.push({
-            key: s.name,
-            actual_key: s.name,
-            value: s.value,
-          });
-        }
-      }
-    });
-
-    // Normalize AI result
-    let safeResult = Array.isArray(result)
-      ? result
-      : Object.entries(result)
-          .filter(([key]) => isNaN(Number(key)))
-          .map(([key, value]) => ({
-            actual_key: key,
-            key,
-            value,
-          }));
-const nestedKeysInForm = fieldsToSend.map((f) => f.key).filter((k) => k.includes("["));
-const topLevelKeysToSkip = new Set(
-  nestedKeysInForm.map(k => k.split("[")[0]) // Extract parent keys like 'productBanner'
-);
-const seenKeys = new Set(fieldsToSend.map(f => f.key));
-safeResult = safeResult.filter(item => !topLevelKeysToSkip.has(item.key));
-
-    safeResult.forEach((item) => {
-       const alreadyExists = seenKeys.has(item.actual_key);
-      if (
-        !item.actual_key ||
-        item.value === undefined ||
-        item.value === null ||
-        alreadyExists || // Skip if already exists
-    !allowedFields.includes(item.actual_key)
-      )
-        return;
-         seenKeys.add(item.actual_key);
-
-      let finalValue = item.value;
-
-      if (item.actual_key === "description" || item.actual_key === "content") {
-        if (typeof item.value === "object" && item.value?.nodeType === "document") {
-          finalValue = item.value;
-        } else {
-          finalValue = {
-            nodeType: "document",
-            data: {},
-            content: [
-              {
-                nodeType: "paragraph",
-                data: {},
-                content: [
-                  {
-                    nodeType: "text",
-                    value: String(item.value || "").trim(),
-                    marks: [],
-                    data: {},
-                  },
-                ],
-              },
-            ],
-          };
-        }
+      // Image field
+      if (uploadedImageId) {
+        fieldsToSend.push({
+          key: "image",
+          actual_key: "image",
+          value: {
+            sys: { id: uploadedImageId, linkType: "Asset", type: "Link" },
+          },
+        });
       }
 
-      if (item.actual_key === "tags" && Array.isArray(item.value)) {
-        finalValue = item.value.join(", ");
-      }
+      // Expand global_fields and referenced schemas for backend matching
+      function flattenSchemas(schemaList: any[]): any[] {
+        const result: any[] = [];
+        const visited = new Set<string>();
+        const queue: any[] = [...schemaList];
 
-      fieldsToSend.push({
-        key: item.actual_key,
-        actual_key: item.actual_key,
-        value: finalValue,
-      });
-    });
+        while (queue.length) {
+          const schema = queue.shift();
+          if (!schema?.id || visited.has(schema.id)) continue;
 
-    // Author field
-    if (selectedAuthor) {
-      fieldsToSend.push({
-        key: "author",
-        actual_key: "author",
-        value: {
-          sys: { id: selectedAuthor, linkType: "Entry", type: "Link" },
-        },
-      });
-    }
-
-    // Image field
-    if (uploadedImageId) {
-      fieldsToSend.push({
-        key: "image",
-        actual_key: "image",
-        value: {
-          sys: { id: uploadedImageId, linkType: "Asset", type: "Link" },
-        },
-      });
-    }
-
-// Expand global_fields and referenced schemas for backend matching
-function flattenSchemas(schemaList: any[]): any[] {
-  const result: any[] = [];
-  const visited = new Set<string>();
-  const queue: any[] = [...schemaList];
-
-  while (queue.length) {
-    const schema = queue.shift();
-    if (!schema?.id || visited.has(schema.id)) continue;
-
-    visited.add(schema.id);
-   result.push({
-  id: schema.id,
-  name: schema.name,
-  type: schema.type || schema.data_type || "Object",
-  fields: schema.fields || schema.schema || [],
-  validations: schema.validations || [],
-  items: schema.items || {},
-  linkContentType:
-    schema.linkContentType ||
-    schema?.validations?.[0]?.linkContentType ||
-    schema?.items?.validations?.[0]?.linkContentType || [],
-});
-
-    // Flatten global_field inner schemas
-    if (schema.data_type === "global_field" && Array.isArray(schema.schema)) {
-      for (const subSchema of schema.schema) {
-        if (subSchema?.id && !visited.has(subSchema.id)) {
-          queue.push({
-            id: subSchema.id,
-            fields: subSchema.fields || [],
-            type: subSchema.type || "Object",
+          visited.add(schema.id);
+          result.push({
+            id: schema.id,
+            name: schema.name,
+            type: schema.type || schema.data_type || "Object",
+            fields: schema.fields || schema.schema || [],
+            validations: schema.validations || [],
+            items: schema.items || {},
+            linkContentType:
+              schema.linkContentType ||
+              schema?.validations?.[0]?.linkContentType ||
+              schema?.items?.validations?.[0]?.linkContentType ||
+              [],
           });
-        }
-      }
-    }
-    //  Flatten referenced content types (Link or Array<Link>)
-    if (Array.isArray(schema.fields)) {
-      for (const field of schema.fields) {
-        if (field.id === "productBanner") {
-        }
- //  Add debug here
-    if (field.linkContentType || field?.items?.validations) {
-      console.log("🔍 Link field types:", {
-        linkContentType: field.linkContentType,
-        itemsValidations: field?.items?.validations,
-      });
-    }
-        const nestedTypeIds =
-          field?.validations?.[0]?.linkContentType ||
-          field?.items?.validations?.[0]?.linkContentType;
 
-        if (Array.isArray(nestedTypeIds)) {
-          for (const nestedId of nestedTypeIds) {
-            const nestedSchema = schemaList.find((s) => s.id === nestedId);
-            if (nestedSchema && !visited.has(nestedId)) {
-              queue.push(nestedSchema);
-            } else if (!nestedSchema) {
-              console.warn(" Missing schema for nested content type:", nestedId);
+          // Flatten global_field inner schemas
+          if (
+            schema.data_type === "global_field" &&
+            Array.isArray(schema.schema)
+          ) {
+            for (const subSchema of schema.schema) {
+              if (subSchema?.id && !visited.has(subSchema.id)) {
+                queue.push({
+                  id: subSchema.id,
+                  fields: subSchema.fields || [],
+                  type: subSchema.type || "Object",
+                });
+              }
+            }
+          }
+          //  Flatten referenced content types (Link or Array<Link>)
+          if (Array.isArray(schema.fields)) {
+            for (const field of schema.fields) {
+              if (field.id === "productBanner") {
+              }
+              //  Add debug here
+              if (field.linkContentType || field?.items?.validations) {
+                console.log("🔍 Link field types:", {
+                  linkContentType: field.linkContentType,
+                  itemsValidations: field?.items?.validations,
+                });
+              }
+              const nestedTypeIds =
+                field?.validations?.[0]?.linkContentType ||
+                field?.items?.validations?.[0]?.linkContentType;
+
+              if (Array.isArray(nestedTypeIds)) {
+                for (const nestedId of nestedTypeIds) {
+                  const nestedSchema = schemaList.find(
+                    (s) => s.id === nestedId
+                  );
+                  if (nestedSchema && !visited.has(nestedId)) {
+                    queue.push(nestedSchema);
+                  } else if (!nestedSchema) {
+                    console.warn(
+                      " Missing schema for nested content type:",
+                      nestedId
+                    );
+                  }
+                }
+              }
             }
           }
         }
-      }
-    }
-  }
 
-  return result;
-}
-
-//  Flatten full schema before sending to backend
-console.log("🚀 contentTypeSchemas:", contentTypeSchemas); // Initial raw check
-const allSchemaObjects = flattenSchemas(contentTypeSchemas);
-
-// ✅ Helpful debug logs before backend call
-console.log("🚀 contentTypeSchemas:", contentTypeSchemas.map(s => s.id));
-console.log("📦 Flattened schema (allSchemaObjects):", allSchemaObjects.map(s => s.id));
-console.log("🧪 Payload before sending to backend:", {
-  contentTypeId,
-  fieldsToSend: fieldsToSend.map(f => ({ key: f.key, value: f.value })),
-});
-
-    const entry = await createContentfulEntry(
-      fieldsToSend,
-      
-      contentTypeId, //  Use the correct one
-      publish,
-      allSchemaObjects  // backend now detects nested structure using this
-    );
-
-    if (!entry?.sys?.id || !entry?.sys?.version) {
-      throw new Error("Entry creation failed or invalid response.");
-    }
-
-    setEntryId(entry.sys.id);
-    setEntryVersion(entry.sys.version);
-
-    if (publish) {
-      const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
-      const environmentId = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
-      const managementToken = process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
-
-      if (!spaceId || !environmentId || !managementToken) {
-        throw new Error("Missing Contentful environment variables.");
+        return result;
       }
 
-      const publishResponse = await axios.put(
-        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entry.sys.id}/published`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${managementToken}`,
-            "X-Contentful-Version": entry.sys.version,
-          },
-        }
+      //  Flatten full schema before sending to backend
+      console.log("🚀 contentTypeSchemas:", contentTypeSchemas); // Initial raw check
+      const allSchemaObjects = flattenSchemas(contentTypeSchemas);
+
+      // ✅ Helpful debug logs before backend call
+      console.log(
+        "🚀 contentTypeSchemas:",
+        contentTypeSchemas.map((s) => s.id)
       );
-      alert("Entry successfully published to Contentful!");
-    } else {
-      console.log("✅ Entry saved as draft:", entry);
-      alert("Entry saved as draft in Contentful.");
+      console.log(
+        "📦 Flattened schema (allSchemaObjects):",
+        allSchemaObjects.map((s) => s.id)
+      );
+      console.log("🧪 Payload before sending to backend:", {
+        contentTypeId,
+        fieldsToSend: fieldsToSend.map((f) => ({ key: f.key, value: f.value })),
+      });
+
+      const entry = await createContentfulEntry(
+        fieldsToSend,
+
+        contentTypeId, //  Use the correct one
+        publish,
+        allSchemaObjects // backend now detects nested structure using this
+      );
+
+      if (!entry?.sys?.id || !entry?.sys?.version) {
+        throw new Error("Entry creation failed or invalid response.");
+      }
+
+      setEntryId(entry.sys.id);
+      setEntryVersion(entry.sys.version);
+
+      if (publish) {
+        const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+        const environmentId =
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+        const managementToken =
+          process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+
+        if (!spaceId || !environmentId || !managementToken) {
+          throw new Error("Missing Contentful environment variables.");
+        }
+
+        alert("Entry successfully published to Contentful!");
+      } else {
+        console.log("✅ Entry saved as draft:", entry);
+        alert("Entry saved as draft in Contentful.");
+      }
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        console.error(" Submit error:", err.response?.data || err.message);
+      } else if (err instanceof Error) {
+        console.error(" Submit error:", err.message);
+      } else {
+        console.error(" Submit error:", String(err));
+      }
+      alert("One or more uploads failed.");
+    } finally {
+      setLoading(false);
     }
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      console.error(" Submit error:", err.response?.data || err.message);
-    } else if (err instanceof Error) {
-      console.error(" Submit error:", err.message);
-    } else {
-      console.error(" Submit error:", String(err));
-    }
-    alert("One or more uploads failed.");
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   // Safe check and logging
   if (Array.isArray(result)) {
@@ -1202,8 +1369,7 @@ console.log("🧪 Payload before sending to backend:", {
         item?.value
       );
     });
-  } else  (result && typeof result === "object") 
-    
+  } else result && typeof result === "object";
 
   // Render result safely
   {
@@ -1240,6 +1406,16 @@ console.log("🧪 Payload before sending to backend:", {
       <p> No result received or result is not a valid object.</p>
     );
   }
+const formatLabel = (key: string) => {
+  return key
+    // insert space before capital letters (e.g. firstName → first Name)
+    .replace(/([A-Z])/g, ' $1')
+    // replace underscores/dashes with space
+    .replace(/[_-]/g, ' ')
+    // capitalize first letter of each word
+    .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .trim();
+};
 
   const renderResult = () => {
     if (!result) {
@@ -1257,7 +1433,7 @@ console.log("🧪 Payload before sending to backend:", {
       console.warn(" result is invalid JSON string:", result);
       return (
         <div className="alert alert-warning">
-           Invalid result format: not valid JSON.
+          Invalid result format: not valid JSON.
         </div>
       );
     }
@@ -1281,7 +1457,7 @@ console.log("🧪 Payload before sending to backend:", {
     if (!Array.isArray(json)) {
       return (
         <div className="alert alert-warning">
-           Invalid result: expected array after processing.
+          Invalid result: expected array after processing.
         </div>
       );
     }
@@ -1395,252 +1571,219 @@ console.log("🧪 Payload before sending to backend:", {
         )}
 
         <form encType="multipart/form-data" method="post">
-          {json?.map((item: any, index: number) => {
-            const actualKey = item.actual_key;
-            // If it's a referenced component
-            if (actualKey === "author") return null;
-            if (nestedSchemas?.hasOwnProperty(actualKey)) {
-              const schema = nestedSchemas[actualKey];
+          {/* Grouped render */}
+          {Object.entries(result || {}).map(([groupKey, fields]) => {
+            if (!Array.isArray(fields) || fields.length === 0) return null;
 
-              const actualEntries = Array.isArray(result[actualKey])
-                ? result[actualKey]
-                : [];
-
+            // Render _root (root-level fields) directly
+            if (groupKey === "_root") {
               return (
-                <div
-                  key={`${actualKey}-${index}`}
-                  className="nested-schema-block mb-8"
-                >
-                  <div className="bg-gray-100 border-l-4 border-blue-500 p-2 mb-4">
-                    <h3 className="text-lg font-semibold capitalize text-blue-800">
-                      {actualKey.replace(/([A-Z])/g, " $1")}
-                    </h3>
-                  </div>
-
-                  {Array.isArray(schema?.entries) &&
-                    schema.entries.length > 0 ? (
-                    schema.entries.map((entry: any, entryIndex: number) => {
-                      const aiEntryData = actualEntries[entryIndex] || {};
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {fields
+                    .filter((item) => item.actual_key !== "author")
+                    .map((item, index) => {
+                      const actualKey = item.actual_key;
 
                       return (
                         <div
-                          key={`${actualKey}-${entryIndex}`}
-                          className="bg-white border p-4 rounded mb-4 shadow"
+                          key={actualKey || index}
+                          className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
                         >
-                          <h4 className="text-md font-bold mb-2">
-                            Entry {entryIndex + 1}
-                          </h4>
+                          <div className="label-bar mb-2 flex justify-between items-center">
+                            <label
+                              htmlFor={actualKey}
+                              className="pl-2 font-semibold"
+                            >
+                              {formatLabel(item.key)} <span className="req">(Required)</span>
+                            </label>
+                            <span className="space-x-2 text-sm">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  regeneratePrompt(actualKey, item?.value)
+                                }
+                                className="text-blue-600 underline"
+                              >
+                                Regenerate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  showRegeneratePromptPopup(actualKey)
+                                }
+                                className="text-blue-600 underline"
+                              >
+                                Prompt
+                              </button>
+                            </span>
+                          </div>
 
-                          {Array.isArray(entry?.fields) &&
-                            entry.fields.length > 0 ? (
-                            entry.fields.map(
-                              (field: any, fieldIndex: number) => {
-                                const fieldKey = field.actual_key;
-                                const fieldValue =
-                                  aiEntryData?.[fieldKey] ?? field.value;
+                          {/* Render image or text field */}
+                          {item.type === "File" ||
+                          item.actual_type === "File" ||
+                          item.key?.toLowerCase().includes("image") ? (
+                            <>
+                              {item?.value?.url ? (
+                                <>
+                                  <img
+                                    src={item.value.url}
+                                    alt={item.value.title || actualKey}
+                                    className="max-w-xs rounded shadow mb-2"
+                                  />
+                                  <p className="text-xs text-gray-400">
+                                    {item.value.title || "Image selected"}
+                                  </p>
+                                </>
+                              ) : (
+                                <div className="text-sm text-gray-500 italic">
+                                  No image selected
+                                </div>
+                              )}
 
-                                const isAsset =
-                                  typeof fieldValue === "object" &&
-                                  (fieldValue?.url || field?.type === "Asset");
+                              <input
+                                type="file"
+                                id={`${actualKey}_input`}
+                                name={actualKey}
+                                accept="image/*"
+                                className="form-control mt-2"
+                                onChange={handleFileChange}
+                              />
 
-                                return (
-                                  <div
-                                    key={`${fieldKey}-${fieldIndex}`}
-                                    className="mb-4"
-                                  >
-                                    <label className="block font-medium mb-1">
-                                      {fieldKey}
-                                    </label>
-
-                                    {fieldKey
-                                      .toLowerCase()
-                                      .includes("image") ? (
-                                      <>
-                                        {fieldValue?.url ? (
-                                          <>
-                                            <img
-                                              src={fieldValue.url}
-                                              alt={fieldValue.title || fieldKey}
-                                              className="max-w-xs rounded shadow mb-2"
-                                            />
-                                            <p className="text-xs text-gray-400">
-                                              {fieldValue.title ||
-                                                "Image selected"}
-                                            </p>
-                                          </>
-                                        ) : (
-                                          <div className="text-sm text-gray-500 italic mb-2">
-                                            No image selected
-                                          </div>
-                                        )}
-
-                                        <input
-                                          type="file"
-                                          name={`${actualKey}[${entryIndex}][${fieldKey}]`}
-                                          accept="image/*"
-                                          className="form-input mt-2"
-                                          onChange={(e) =>
-                                            handleNestedImageUpload(
-                                              e,
-                                              actualKey,
-                                              entryIndex,
-                                              fieldKey
-                                            )
-                                          }
-                                        />
-
-                                        <button
-                                          type="button"
-                                          className="secondary-button ml-2"
-                                          onClick={() =>
-                                            openImagePicker(
-                                              actualKey,
-                                              entryIndex,
-                                              fieldKey
-                                            )
-                                          }
-                                        >
-                                          Select from Contentful
-                                        </button>
-                                      </>
-                                    ) : typeof fieldValue === "object" &&
-                                      typeof fieldValue.url === "string" &&
-                                      typeof fieldValue.title === "string" ? (
-                                      <a
-                                        href={fieldValue.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-blue-600 underline"
-                                      >
-                                        {fieldValue.title}
-                                      </a>
-                                    ) : (
-                                      <textarea
-                                        className="form-control form-textarea"
-                                        name={`${actualKey}[${entryIndex}][${fieldKey}]`}
-                                        defaultValue={
-                                          typeof fieldValue === "object" && fieldValue !== null && "value" in fieldValue
-                                            ? fieldValue.value
-                                            : typeof fieldValue === "object"
-                                              ? JSON.stringify(fieldValue, null, 2)
-                                              : fieldValue || ""
-                                        }
-
-                                        rows={Math.min(
-                                          10,
-                                          typeof fieldValue === "string"
-                                            ? fieldValue.split("\n").length + 1
-                                            : 4
-                                        )}
-                                      />
-                                    )}
-                                  </div>
-                                );
-                              }
-                            )
+                              <button
+                                type="button"
+                                className="secondary-button ml-2"
+                                onClick={() =>
+                                  openImagePicker(actualKey, -1, actualKey)
+                                }
+                              >
+                                Select from Contentful
+                              </button>
+                            </>
                           ) : (
-                            <div className="text-red-600">
-                              No fields found for entry {entryIndex + 1}
-                            </div>
+                            <textarea
+                              className="form-control form-textarea"
+                              id={actualKey}
+                              name={actualKey}
+                              defaultValue={
+                                typeof item.value === "object"
+                                  ? JSON.stringify(item.value, null, 2)
+                                  : item.value || ""
+                              }
+                              rows={Math.min(
+                                10,
+                                typeof item.value === "string"
+                                  ? item.value.split("\n").length + 1
+                                  : 4
+                              )}
+                              style={{ whiteSpace: "pre-wrap" }}
+                            />
                           )}
                         </div>
                       );
-                    })
-                  ) : (
-                    <div className="text-red-600">
-                      No entries found for {actualKey}
-                    </div>
-                  )}
+                    })}
                 </div>
               );
             }
 
-            // Root-level field
-
+            // 🔻 Render grouped nested fields like "productBanner"
             return (
-              <div
-                key={actualKey || index}
-                className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
-              >
-                <div className="label-bar">
-                  <label htmlFor={actualKey} className="mb-2 pl-2">
-                    <strong>
-                      {item.key} <span className="req">(Required)</span>
-                    </strong>
-                  </label>
-                  <span>
-                    <button
-                      type="button"
-                      onClick={() => regeneratePrompt(actualKey, item?.value)}
-                    >
-                      Regenerate
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => showRegeneratePromptPopup(actualKey)}
-                    >
-                      Prompt
-                    </button>
-                  </span>
+              <div key={groupKey} className="nested-schema-block mb-8">
+                <div className="bg-gray-100 border-l-4 border-blue-500 p-2 mb-4">
+                  <h3 className="text-lg font-semibold capitalize text-blue-800">
+                    {groupKey.replace(/([A-Z])/g, " $1")}
+                  </h3>
                 </div>
 
-                {item.type === "File" ||
-                  item.actual_type === "File" ||
-                  item.key?.toLowerCase().includes("image") ? (
-                  <>
-                    {item?.value?.url ? (
-                      <>
-                        <img
-                          src={item.value.url}
-                          alt={item.value.title || actualKey}
-                          className="max-w-xs rounded shadow mb-2"
-                        />
-                        <p className="text-xs text-gray-400">
-                          {item.value.title || "Image selected"}
-                        </p>
-                      </>
-                    ) : (
-                      <div className="text-sm text-gray-500 italic">
-                        No image selected
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {fields.map((field, fieldIndex) => {
+                    const fieldKey = field.actual_key;
+                    const fieldValue = field.value;
+
+                    return (
+                      <div
+                        key={`${groupKey}-${fieldKey}-${fieldIndex}`}
+                        className="bg-white border p-4 rounded shadow"
+                      >
+                        <label className="block font-medium mb-1">
+                         {formatLabel(fieldKey)}
+                        </label>
+
+                        {fieldKey.toLowerCase().includes("image") ? (
+                          <>
+                            {fieldValue?.url ? (
+                              <>
+                                <img
+                                  src={fieldValue.url}
+                                  alt={fieldValue.title || fieldKey}
+                                  className="max-w-xs rounded shadow mb-2"
+                                />
+                                <p className="text-xs text-gray-400">
+                                  {fieldValue.title || "Image selected"}
+                                </p>
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500 italic mb-2">
+                                No image selected
+                              </div>
+                            )}
+
+                            <input
+                              type="file"
+                              name={`${groupKey}.${fieldKey}`}
+                              accept="image/*"
+                              className="form-input mt-2"
+                              onChange={(e) =>
+                                handleNestedImageUpload(
+                                  e,
+                                  groupKey,
+                                  0,
+                                  fieldKey
+                                )
+                              }
+                            />
+
+                            <button
+                              type="button"
+                              className="secondary-button ml-2"
+                              onClick={() =>
+                                openImagePicker(groupKey, 0, fieldKey)
+                              }
+                            >
+                              Select from Contentful
+                            </button>
+                          </>
+                        ) : typeof fieldValue === "object" &&
+                          fieldValue?.url &&
+                          fieldValue?.title ? (
+                          <a
+                            href={fieldValue.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline"
+                          >
+                            {fieldValue.title}
+                          </a>
+                        ) : (
+                          <textarea
+                            className="form-control form-textarea"
+                            name={`${groupKey}.${fieldKey}`}
+                            defaultValue={
+                              typeof fieldValue === "object"
+                                ? JSON.stringify(fieldValue, null, 2)
+                                : fieldValue || ""
+                            }
+                            rows={Math.min(
+                              10,
+                              typeof fieldValue === "string"
+                                ? fieldValue.split("\n").length + 1
+                                : 4
+                            )}
+                          />
+                        )}
                       </div>
-                    )}
-
-                    <input
-                      type="file"
-                      id={`${actualKey}_input`}
-                      name={actualKey}
-                      accept="image/*"
-                      className="form-control mt-2"
-                      onChange={handleFileChange}
-                    />
-
-                    <button
-                      type="button"
-                      className="secondary-button ml-2"
-                      onClick={() => openImagePicker(actualKey, -1, actualKey)}
-                    >
-                      Select from Contentful
-                    </button>
-                  </>
-                ) : (
-                  <textarea
-                    className="form-control form-textarea"
-                    id={actualKey}
-                    name={actualKey}
-                    defaultValue={
-                      typeof item.value === "object"
-                        ? JSON.stringify(item.value, null, 2)
-                        : item.value || ""
-                    }
-                    rows={Math.min(
-                      10,
-                      typeof item.value === "string"
-                        ? item.value.split("\n").length + 1
-                        : 4
-                    )}
-                    style={{ whiteSpace: "pre-wrap" }}
-                  />
-                )}
+                    );
+                  })}
+                </div>
               </div>
             );
           })}
@@ -1693,13 +1836,11 @@ console.log("🧪 Payload before sending to backend:", {
             <button
               type="button"
               className="primary-button"
-              
               onClick={() => {
-  console.log("Sending template to backend:", template);
-  handleSubmit(false, patchedSchemas, template);
-}}
+                console.log("Sending template to backend:", template);
+                handleSubmit(false, patchedSchemas, template);
+              }}
               disabled={loading}
-              
             >
               <svg
                 width="18"
@@ -1721,7 +1862,6 @@ console.log("🧪 Payload before sending to backend:", {
                   fill="#6C5CE7"
                 />
               </svg>
-              
               Save
             </button>
             <button
@@ -1826,7 +1966,7 @@ console.log("🧪 Payload before sending to backend:", {
                   <button
                     className="bg-transparent"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={!!url.trim()}
+                    disabled={!!(url || "").trim()}
                   >
                     Choose File
                   </button>
@@ -1840,7 +1980,7 @@ console.log("🧪 Payload before sending to backend:", {
                     }
                   />
                   {selectedFile && (
-                    <p className="mt-2 text-muted hidden">
+                    <p className="mt-2 text-muted">
                       Selected file: {selectedFile.name}
                     </p>
                   )}
@@ -1966,28 +2106,29 @@ console.log("🧪 Payload before sending to backend:", {
       {secondPage && (
         <div className="mb-5">
           <div className="bg-white content-box">
-            <div className="border-[var(--border-color)] border-t-[1px] rounded-t-lg border-l-[1px] border-r-[1px] border-b-[1px] p-4">
-              <h2>Select Content Types</h2>
-            </div>
             <div className="p-4 border-[var(--border-color)] border-l-[1px] border-r-[1px]">
-              {contentTypeResult?.content_types?.map(
-                (field: { options: any; title: string; uid: string }) =>
-                  field.options.is_page && (
-                    <div className="form-check" key={field.uid}>
-                      <label className="form-check-label">
-                        <input
-                          type="radio"
-                          className="form-check-input"
-                          name="template"
-                          value={field.uid}
-                          checked={template === field.uid}
-                          onChange={() => setTemplate(field.uid)}
-                        />
+              <label
+                htmlFor="contentTypeSelect"
+                className="block mb-2 font-medium"
+              >
+                Choose a Content Type
+              </label>
+              <select
+                id="contentTypeSelect"
+                className="w-full border px-3 py-2 rounded"
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+              >
+                <option value="">-- Select a Content Type --</option>
+                {contentTypeResult?.content_types?.map(
+                  (field: { options: any; title: string; uid: string }) =>
+                    field.options.is_page && (
+                      <option key={field.uid} value={field.uid}>
                         {field.title}
-                      </label>
-                    </div>
-                  )
-              )}
+                      </option>
+                    )
+                )}
+              </select>
             </div>
           </div>
           <div className="bg-white flex justify-content-end border-b-[1px] border-t-[1px] border-l-[1px] border-r-[1px] p-4 rounded-b-lg">

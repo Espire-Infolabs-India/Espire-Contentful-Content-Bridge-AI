@@ -16,17 +16,12 @@ export default async function handler(req, res) {
       }
     );
 
-      // ✅ Allowed Content Types
-const allowedContentTypeIds = ["componentBlogPostAi","productLandingPage", "landingPage", "blogLandingPage"]; // Replace with your real IDs
+      const contentTypes = response.data.items.map((item) => ({
+      uid: item.sys.id,
+      title: item.name,
+      options: { is_page: true },
+    }))
 
-// ✅ Filter to only allowed content types
-const contentTypes = response.data.items
-  ?.filter((item) => allowedContentTypeIds.includes(item.sys.id))
-  .map((item) => ({
-    uid: item.sys.id,
-    title: item.name,
-    options: { is_page: true },
-  }));
 
     res.status(200).json({ content_types: contentTypes });
   } catch (error) {
