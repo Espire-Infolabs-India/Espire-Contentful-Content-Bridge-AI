@@ -1,66 +1,145 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ConfigAppSDK } from '@contentful/app-sdk';
-import { Heading, Form, Paragraph, Flex } from '@contentful/f36-components';
+import {
+  Heading,
+  Form,
+  Paragraph,
+  Flex,
+  FormControl,
+  TextInput,
+  Box,
+} from '@contentful/f36-components';
 import { css } from 'emotion';
-import { /* useCMA, */ useSDK } from '@contentful/react-apps-toolkit';
+import { useSDK, useCMA } from '@contentful/react-apps-toolkit';
 
-export interface AppInstallationParameters {}
+export interface AppInstallationParameters {
+  cmaToken?: string;
+  deliveryToken?: string;
+}
 
 const ConfigScreen = () => {
-  const [parameters, setParameters] = useState<AppInstallationParameters>({});
   const sdk = useSDK<ConfigAppSDK>();
-  /*
-     To use the cma, inject it as follows.
-     If it is not needed, you can remove the next line.
-  */
-  // const cma = useCMA();
+  const cma = useCMA();
+  const [parameters, setParameters] = useState<AppInstallationParameters>({});
+  const [spaceInfo, setSpaceInfo] = useState<{
+    spaceName?: string;
+    spaceId?: string;
+    environmentId?: string;
+  }>({});
 
+  // 🚀 1. Fetch params from API route
+  const fetchInstallationParams = async ({
+    spaceId,
+    environmentId,
+    appId,
+  }: {
+    spaceId: string;
+    environmentId: string;
+    appId?: string;
+  }) => {
+    try {
+      const url = new URL('/api/get-installation-params', window.location.origin);
+      url.searchParams.set('spaceId', spaceId);
+      url.searchParams.set('environmentId', environmentId);
+      if (appId) url.searchParams.set('appId', appId);
+
+      const res = await fetch(url.toString());
+      if (!res.ok) throw new Error('Failed to fetch installation parameters');
+      const data = await res.json();
+      setParameters((prev) => ({ ...prev, ...data }));
+    } catch (err) {
+      console.error('Error fetching params from server:', err);
+      sdk.notifier.error('Failed to fetch saved installation parameters.');
+    }
+  };
+
+  // 🚀 2. Save configuration
   const onConfigure = useCallback(async () => {
-    // This method will be called when a user clicks on "Install"
-    // or "Save" in the configuration screen.
-    // for more details see https://www.contentful.com/developers/docs/extensibility/ui-extensions/sdk-reference/#register-an-app-configuration-hook
+    if (!parameters.cmaToken || !parameters.deliveryToken) {
+      sdk.notifier.error('Please fill in both CMA Token and Delivery Token.');
+      return false;
+    }
 
-    // Get current the state of EditorInterface and other entities
-    // related to this app installation
     const currentState = await sdk.app.getCurrentState();
-
+    sdk.notifier.success('Configuration saved successfully!');
     return {
-      // Parameters to be persisted as the app configuration.
       parameters,
-      // In case you don't want to submit any update to app
-      // locations, you can just pass the currentState as is
       targetState: currentState,
     };
   }, [parameters, sdk]);
 
+  // ✅ Register save callback
   useEffect(() => {
-    // `onConfigure` allows to configure a callback to be
-    // invoked when a user attempts to install the app or update
-    // its configuration.
     sdk.app.onConfigure(() => onConfigure());
   }, [sdk, onConfigure]);
 
+  // 📦 Initial load
   useEffect(() => {
     (async () => {
-      // Get current parameters of the app.
-      // If the app is not installed yet, `parameters` will be `null`.
-      const currentParameters: AppInstallationParameters | null = await sdk.app.getParameters();
-
+      const currentParameters = await sdk.app.getParameters();
       if (currentParameters) {
         setParameters(currentParameters);
       }
 
-      // Once preparation has finished, call `setReady` to hide
-      // the loading screen and present the app to a user.
+      const spaceId = sdk.ids.space;
+      const environmentId = sdk.ids.environment;
+      const appId = sdk.ids.app;
+
+      try {
+        const space = await cma.space.get({ spaceId });
+        setSpaceInfo({ spaceName: space.name, spaceId, environmentId });
+      } catch (err) {
+        console.error('Failed to fetch space info:', err);
+        sdk.notifier.error('Could not fetch space information.');
+        setSpaceInfo({
+          spaceName: 'Unavailable',
+          spaceId,
+          environmentId,
+        });
+      }
+
+      // 🧠 Fetch saved installation params
+      await fetchInstallationParams({ spaceId, environmentId, appId });
+
       sdk.app.setReady();
     })();
-  }, [sdk]);
+  }, [sdk, cma]);
 
   return (
     <Flex flexDirection="column" className={css({ margin: '80px', maxWidth: '800px' })}>
       <Form>
-        <Heading>App Config</Heading>
-        <Paragraph>Welcome to your contentful app. This is your config page.</Paragraph>
+        <Heading>App Configuration</Heading>
+        <Paragraph>Configure your API tokens and view installation environment info.</Paragraph>
+
+        <Box marginTop="spacingM">
+          <h3>Space: {spaceInfo.spaceName}</h3>
+          <h3>Space ID: {spaceInfo.spaceId}</h3>
+          <h3>Environment: {spaceInfo.environmentId}</h3>
+        </Box>
+
+        <Box marginTop="spacingL">
+          <FormControl isRequired>
+            <FormControl.Label>CMA Token</FormControl.Label>
+            <TextInput
+              type="password"
+              value={parameters.cmaToken || ''}
+              onChange={(e) =>
+                setParameters({ ...parameters, cmaToken: e.target.value })
+              }
+            />
+          </FormControl>
+
+          <FormControl isRequired marginTop="spacingM">
+            <FormControl.Label>Delivery Token</FormControl.Label>
+            <TextInput
+              type="password"
+              value={parameters.deliveryToken || ''}
+              onChange={(e) =>
+                setParameters({ ...parameters, deliveryToken: e.target.value })
+              }
+            />
+          </FormControl>
+        </Box>
       </Form>
     </Flex>
   );
