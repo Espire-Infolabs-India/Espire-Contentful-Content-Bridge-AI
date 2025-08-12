@@ -28,15 +28,12 @@ const Settings: React.FC<SettingsProps> = ({ model, setAIModel }) => {
 
             <div className="mb-4 ">
               <label className="block mb-1 text-black py-3">Model:</label>
-              <select
-                value={model}
-                onChange={(e) => setAIModel(e)}
-               className="form-select form-dropdown form-textarea"
-              >
-                <option value="gemini-2.0-flash">Gemini 2.0 Pro</option>
-                <option value="claude-3-opus">Claude 3 Opus</option>
-                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-              </select>
+             <select value={model} onChange={(e) => setAIModel(e)} className="form-select form-dropdown form-textarea">
+  <option value="">-- Select a model --</option>
+  <option value="gemini-2.0-flash">Gemini 2.0 Pro</option>
+  <option value="claude-3-opus">Claude 3 Opus</option>
+  <option value="gpt-4-turbo">GPT-4 Turbo</option>
+</select>
             </div>
 
             <div className="flex justify-end gap-2">

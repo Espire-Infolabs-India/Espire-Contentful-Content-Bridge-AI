@@ -16,9 +16,7 @@ async function fetchFieldsFromContentType(
   const res = await axios.get(
     `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}`,
     {
-      headers: {
-        Authorization: `Bearer ${managementToken}`,
-      },
+      headers: { Authorization: `Bearer ${managementToken}` },
     }
   );
 
@@ -26,28 +24,81 @@ async function fetchFieldsFromContentType(
   nestedSchemas[contentTypeId] = fields;
 
   for (const field of fields) {
-    // Single Link
+    let refTypes: string[] | undefined;
+
     if (field.type === "Link" && field.linkType === "Entry") {
-      const refTypes = field.validations?.find((v: any) => v.linkContentType)?.linkContentType;
-      if (refTypes) {
-        for (const nestedType of refTypes) {
-          await fetchFieldsFromContentType(nestedType, spaceId, environmentId, managementToken, nestedSchemas, visited);
-        }
-      }
+      refTypes = field.validations?.find((v: any) => v.linkContentType)?.linkContentType;
     }
 
-    // Array of Links
     if (field.type === "Array" && field.items?.linkType === "Entry") {
-      const refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
-      if (refTypes) {
-        for (const nestedType of refTypes) {
-          await fetchFieldsFromContentType(nestedType, spaceId, environmentId, managementToken, nestedSchemas, visited);
-        }
+      refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+    }
+
+    if (refTypes) {
+      for (const nestedType of refTypes) {
+        await fetchFieldsFromContentType(nestedType, spaceId, environmentId, managementToken, nestedSchemas, visited);
       }
     }
   }
 
   return fields;
+}
+
+// Fetch helpText mapping for a given content type
+async function fetchHelpTextMap(
+  contentTypeId: string,
+  spaceId: string,
+  environmentId: string,
+  managementToken: string
+) {
+  const editorRes = await axios.get(
+    `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}/editor_interface`,
+    {
+      headers: { Authorization: `Bearer ${managementToken}` },
+    }
+  );
+
+  const map: Record<string, string> = {};
+  for (const control of editorRes.data.controls || []) {
+    if (control.fieldId && control.settings?.helpText) {
+      map[control.fieldId] = control.settings.helpText;
+    }
+  }
+  return map;
+}
+
+// Add nested field details to a simplifiedField
+async function addNestedFields(
+  parentField: any,
+  refTypes: string[],
+  nestedSchemas: Record<string, any>,
+  spaceId: string,
+  environmentId: string,
+  managementToken: string
+) {
+  parentField.linkContentType = refTypes;
+  parentField.nestedFields = [];
+
+  for (const nestedType of refTypes) {
+    const nestedFields = nestedSchemas[nestedType] || [];
+    const nestedHelpTextMap = await fetchHelpTextMap(nestedType, spaceId, environmentId, managementToken);
+
+    for (const nf of nestedFields) {
+      parentField.nestedFields.push({
+        id: nf.id,
+        name: nf.name,
+        display_name: nf.name,
+        helpText: nestedHelpTextMap[nf.id] || "",
+        type: nf.type,
+        from: nestedType,
+      });
+    }
+  }
+
+  // Deduplicate nestedFields by id + from
+  parentField.nestedFields = Array.from(
+    new Map(parentField.nestedFields.map((f: { id: any; from: any }) => [`${f.id}-${f.from}`, f])).values()
+  );
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -63,78 +114,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN!;
 
     const nestedSchemas: Record<string, any> = {};
-    const rootFields = await fetchFieldsFromContentType(template, spaceId, environmentId, managementToken, nestedSchemas, new Set());
-
-    // 🔍 Fetch help text from editor interface
-    const editorRes = await axios.get(
-      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${template}/editor_interface`,
-      {
-        headers: {
-          Authorization: `Bearer ${managementToken}`,
-        },
-      }
-    );
-
-    console.log("🧪 Editor Interface Response:");
-console.log(JSON.stringify(editorRes.data, null, 2));
-    const helpTextMap: Record<string, string> = {};
-    for (const control of editorRes.data.controls || []) {
-      if (control.fieldId && control.settings?.helpText) {
-        helpTextMap[control.fieldId] = control.settings.helpText;
-      }
-    }
+    const rootFields = await fetchFieldsFromContentType(template, spaceId, environmentId, managementToken, nestedSchemas);
+    const helpTextMap = await fetchHelpTextMap(template, spaceId, environmentId, managementToken);
 
     const simplifiedSchema = [];
 
     for (const field of rootFields) {
-      console.log("🌐 Raw Field:", JSON.stringify(field, null, 2));
-
       const simplifiedField: any = {
         id: field.id,
         name: field.name,
         display_name: field.name,
-      helpText: helpTextMap[field.id] || "", // ✅ ensures field is present✅ fetched from editor_interface
+        helpText: helpTextMap[field.id] || "",
         type: field.type,
+       
       };
 
+      let refTypes: string[] | undefined;
+
+      if (field.type === "Link" && field.linkType === "Entry") {
+        refTypes = field.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+      }
+
       if (field.type === "Array" && field.items?.linkType === "Entry") {
-        const refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+        refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+      }
 
-        if (refTypes && refTypes.length > 0) {
-          const nestedType = refTypes[0];
-          simplifiedField.linkContentType = nestedType;
-
-          const nested = nestedSchemas[nestedType] || [];
-
-          // 👇 Fetch nested helpTextMap too
-          const nestedEditorRes = await axios.get(
-            `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${nestedType}/editor_interface`,
-            {
-              headers: {
-                Authorization: `Bearer ${managementToken}`,
-              },
-            }
-          );
-
-          const nestedHelpTextMap: Record<string, string> = {};
-          for (const control of nestedEditorRes.data.controls || []) {
-            if (control.fieldId && control.settings?.helpText) {
-              nestedHelpTextMap[control.fieldId] = control.settings.helpText;
-            }
-          }
-
-          simplifiedField.nestedFields = nested.map((nf: any) => ({
-            id: nf.id,
-            name: nf.name,
-            display_name: nf.name,
-            helpText: nestedHelpTextMap[nf.id] || "",
-            type: nf.type,
-          }));
-        }
+      if (refTypes && refTypes.length > 0) {
+        await addNestedFields(simplifiedField, refTypes, nestedSchemas, spaceId, environmentId, managementToken);
       }
 
       simplifiedSchema.push(simplifiedField);
-      console.log("📦 Final simplifiedField:", simplifiedField);
     }
 
     return res.status(200).json({ schema: simplifiedSchema });

@@ -18,9 +18,8 @@ export default function HomePage() {
     entryIndex: number;
     fieldKey: string;
   } | null>(null);
+  const fieldsToSendRef = useRef<any[]>([]);
   const [patchedSchemas, setPatchedSchemas] = useState([]);
-  const [contentTypeSchemas, setContentTypeSchemas] = useState<any[]>([]);
-  const [schemas, setSchemas] = useState<any>(null);
   const [showGeneratedResult, setShowGeneratedResult] = useState(false);
   const [nestedSchemas, setNestedSchemas] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -30,7 +29,7 @@ export default function HomePage() {
   const [fileName, setFileName] = useState<string>("");
   const [fileSize, setFileSize] = useState<number>(0);
   const [uploadedImageId, setUploadedImageId] = useState<string>("");
-  const [template, setTemplate] = useState<string>("author");
+  const [template, setTemplate] = useState<string>("");
   const [url, setURL] = useState<string>("");
   const [successMsg, setSuccessMsg] = useState<boolean>(false);
   const [result, setResult] = useState<any>({ allowedFields: [] });
@@ -38,10 +37,9 @@ export default function HomePage() {
   const [fileFieldList, setFileFieldList] = useState<any>(null);
   const [contentTypeResult, setContentTypeResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [authors, setAuthors] = useState<{ id: string; name: string }[]>([]);
   const imageAssetIdRef = useRef<string | null>(null);
   const [selectedAuthor, setSelectedAuthor] = useState("");
-  const [aiModel, setAIModel] = useState<string>("gemini-2.0-flash");
+  const [aiModel, setAIModel] = useState<string>("");
   const [firstPage, setFirstPage] = useState(true);
   const [secondPage, setSecondPage] = useState(false);
   const [uploadedDetails, setUploadedDetails] = useState(false);
@@ -102,18 +100,7 @@ export default function HomePage() {
       }
     };
 
-    async function loadAuthors() {
-      try {
-        const res = await fetch("/api/fetch-authors");
-        if (!res.ok) throw new Error("Failed to fetch authors");
-        const data = await res.json();
-        setAuthors(data);
-      } catch (error) {
-        console.error("Error loading authors:", error);
-      }
-    }
     fetchData();
-    loadAuthors();
   }, []);
 
   const handleFileSelect = (file: File) => {
@@ -245,20 +232,6 @@ export default function HomePage() {
       return;
     }
 
-    // if (entryIndex === -1) {
-    //   // Handle root-level image field
-    //   setResult((prevResult: any) => ({
-    //     ...prevResult,
-    //     [parentKey]: {
-    //       id: asset.id,
-    //       title: asset.title,
-    //       url: asset.url,
-    //     },
-    //   }));
-    //   setIsAssetPickerOpen(false);
-    //   alert(`Selected: ${asset.title}`);
-    //   return;
-    // }
     // Update result (main form)
     setResult((prevResult: any) => {
       const updated = Array.isArray(prevResult) ? [...prevResult] : [];
@@ -353,68 +326,6 @@ export default function HomePage() {
     setIsAssetPickerOpen(false);
   };
 
-  function normalizeSchema(rawSchema: any[]): any[] {
-    const result: any[] = [];
-
-    for (const item of rawSchema) {
-      const key = Object.keys(item)[0];
-      const label = item[key];
-
-      if (
-        typeof label === "string" &&
-        label.startsWith("[") &&
-        label.includes("{")
-      ) {
-        const nestedFields = [...label.matchAll(/(\w+): \(([^)]+)\)/g)].map(
-          ([, id, name]) => ({
-            id,
-            name,
-            type: "Text", // enhance if needed
-          })
-        );
-
-        result.push({
-          id: key,
-          name: key,
-          type: "Array",
-          helpText: item.helpText || "", // ✅ Add this
-          nestedFields,
-        });
-      } else {
-        result.push({
-          id: key,
-          name: typeof label === "string" ? label.replace(/[()]/g, "") : key,
-          type: "Text",
-          helpText: item.helpText || "", // ✅ Add this
-        });
-      }
-    }
-    return result;
-  }
-
-  // ✅ Normalize schema to include display_name
-  function enrichSchemaWithDisplayNameAndHelpText(schema: any[]): any[] {
-    return schema.map((field) => {
-      const enrichedField = {
-        ...field,
-        display_name: field.name || field.id,
-        helpText: field.helpText ?? null,
-      };
-
-      if (field.type === "Array" && Array.isArray(field.nestedFields)) {
-        enrichedField.nestedFields = field.nestedFields.map(
-          (nested: { name: any; id: any; helpText: any }) => ({
-            ...nested,
-            display_name: nested.name || nested.id,
-            helpText: nested.helpText ?? null,
-          })
-        );
-      }
-
-      return enrichedField;
-    });
-  }
-
   const generateContent = async (e: React.SyntheticEvent) => {
     if (!template) return alert("Please select a content type.");
     if ((!selectedFile && !url.trim()) || (selectedFile && url.trim())) {
@@ -428,9 +339,36 @@ export default function HomePage() {
       );
       const schemaJson = await schemaRes.json();
       const schemaFields = schemaJson?.schema || [];
+
+      console.log(
+        "📜 Schema fetched from backend:",
+        JSON.stringify(schemaFields, null, 2)
+      );
       //Create Azure-style schema object (flat format, but still informative)
-      const content_type = schemaFields.map((field: any) => {
-        if (field.linkContentType && Array.isArray(field.nestedFields)) {
+      const content_type = schemaFields.flatMap((field: any) => {
+        // ✅ MULTI-REFERENCE: field with nestedSchemas for each referenced type
+        if (
+          field.type === "Array" &&
+          field.items?.linkType === "Entry" &&
+          Array.isArray(field.nestedFields)
+        ) {
+          return field.nestedFields.map((refSchema: any) => {
+            const refFields = (refSchema.fields || [])
+              .map((nestedField: any) => {
+                return `${nestedField.id}: (${
+                  nestedField.name || nestedField.id
+                })`;
+              })
+              .join(", ");
+
+            return {
+              [`${field.id} (${refSchema.id})`]: `[ { ${refFields} } ]`,
+            };
+          });
+        }
+
+        // ✅ SINGLE REFERENCE with nested fields
+        if (Array.isArray(field.nestedFields)) {
           const nested = field.nestedFields
             .map((nestedField: any) => {
               return `${nestedField.id}: (${
@@ -443,6 +381,7 @@ export default function HomePage() {
           };
         }
 
+        // ✅ SIMPLE FIELD
         return {
           [field.id]: `(${field.name || field.id})`,
         };
@@ -454,16 +393,11 @@ export default function HomePage() {
         setLoading(false);
         return;
       }
-      // Log what we are sending to Azure
-      console.log("📤 Full schema payload to send to Azure:", content_type);
       // ✅ 3. Build FormData
       const formData = new FormData();
       formData.append("template", template);
       formData.append("model", aiModel);
-      console.log("📤 Sending content_type to Azure:", content_type);
-      const normalizedSchema =
-        enrichSchemaWithDisplayNameAndHelpText(schemaFields);
-      formData.append("content_type", JSON.stringify(normalizedSchema)); // ✅ fixed!
+      formData.append("content_type", JSON.stringify(schemaFields)); // ✅ fixed!
 
       if (selectedFile) {
         formData.append("pdf", selectedFile);
@@ -543,8 +477,7 @@ export default function HomePage() {
       if (Array.isArray(data?.summary) && data.summary.length > 0) {
         filteredSummary = data.summary.filter(
           (item: { actual_key: string }) =>
-            item.actual_key?.toLowerCase() !== "image" &&
-            item.actual_key?.toLowerCase() !== "author"
+            item.actual_key?.toLowerCase() !== "image"
         );
       } else if (Array.isArray(data?.result)) {
         filteredSummary = data.result;
@@ -603,10 +536,7 @@ export default function HomePage() {
               );
               return null;
             }
-            if (
-              key.toLowerCase() === "author" ||
-              key.toLowerCase().includes("image")
-            ) {
+            if (key.toLowerCase().includes("image")) {
               return {
                 key,
                 actual_key: key,
@@ -669,26 +599,37 @@ export default function HomePage() {
         };
       });
 
-      // ✅ Group processed summary by top-level and nested fields
+      // ✅ Group processed summary by parent (top-level key)
       const groupedSummary: Record<string, any[]> = {};
 
       for (const item of processedSummary) {
         const keyParts = item.actual_key?.split(".");
-        if (keyParts.length === 2) {
-          const [parent, child] = keyParts;
+
+        if (keyParts.length >= 3) {
+          const parent = keyParts[keyParts.length - 2]; // second last
+          const child = keyParts[keyParts.length - 1]; // last
+
           if (!groupedSummary[parent]) groupedSummary[parent] = [];
+
           groupedSummary[parent].push({
             ...item,
-            actual_key: child,
+            actual_key: child, // ✅ overwrite full key so JSX won't show the long version
+            display_name: child.replace(/([A-Z])/g, " $1").trim(), // ✅ only last part
+            parent_name: parent.replace(/([A-Z])/g, " $1").trim(),
           });
         } else {
+          // Root level fields
           if (!groupedSummary["_root"]) groupedSummary["_root"] = [];
-          groupedSummary["_root"].push(item);
+
+          groupedSummary["_root"].push({
+            ...item,
+            display_name: item.actual_key.replace(/([A-Z])/g, " $1").trim(),
+            parent_name: "_root",
+          });
         }
       }
 
       setResult(groupedSummary);
-
       setShowGeneratedResult(true);
       setReferenceFields(data?.referenceFields || []);
       setFileFieldList(data?.fileFieldList || []);
@@ -751,102 +692,106 @@ export default function HomePage() {
   };
 
   const publishToCMS = async () => {
-  if (!entryId) {
-    alert("No draft entry found to publish. Please save as draft first.");
-    return;
-  }
+    if (!entryId) {
+      alert("No draft entry found to publish. Please save as draft first.");
+      return;
+    }
 
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
-    const environmentId =
-      process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
-    const managementToken =
-      process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+      const spaceId = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+      const environmentId =
+        process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+      const managementToken =
+        process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
 
-    const headers = {
-      Authorization: `Bearer ${managementToken}`,
-      "Content-Type": "application/json",
-    };
+      const headers = {
+        Authorization: `Bearer ${managementToken}`,
+        "Content-Type": "application/json",
+      };
 
-    // 🟡 Step 1: Fetch latest version of main entry
-    const getEntryResponse = await axios.get(
-      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}`,
-      { headers }
-    );
+      // 🟡 Step 1: Fetch latest version of main entry
+      const getEntryResponse = await axios.get(
+        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}`,
+        { headers }
+      );
 
-    const entryData = getEntryResponse.data;
-    const latestVersion = entryData.sys.version;
+      const entryData = getEntryResponse.data;
+      const latestVersion = entryData.sys.version;
 
-    // 🔍 Step 2: Extract nested entry IDs from fields
-    const nestedEntryIds: string[] = [];
+      // 🔍 Step 2: Extract nested entry IDs from fields
+      const nestedEntryIds: string[] = [];
 
-    for (const fieldKey of Object.keys(entryData.fields)) {
-      const value = entryData.fields[fieldKey]["en-US"];
+      for (const fieldKey of Object.keys(entryData.fields)) {
+        const value = entryData.fields[fieldKey]["en-US"];
 
-      // Handle single nested entry
-      if (value?.sys?.type === "Link" && value.sys.linkType === "Entry") {
-        nestedEntryIds.push(value.sys.id);
-      }
+        // Handle single nested entry
+        if (value?.sys?.type === "Link" && value.sys.linkType === "Entry") {
+          nestedEntryIds.push(value.sys.id);
+        }
 
-      // Handle array of nested entries
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          if (item?.sys?.type === "Link" && item.sys.linkType === "Entry") {
-            nestedEntryIds.push(item.sys.id);
+        // Handle array of nested entries
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (item?.sys?.type === "Link" && item.sys.linkType === "Entry") {
+              nestedEntryIds.push(item.sys.id);
+            }
           }
         }
       }
-    }
 
-    // ✅ Step 3: Publish each nested entry
-    for (const nestedId of nestedEntryIds) {
-      try {
-        const nestedEntryRes = await axios.get(
-          `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}`,
-          { headers }
-        );
+      // ✅ Step 3: Publish each nested entry
+      for (const nestedId of nestedEntryIds) {
+        try {
+          const nestedEntryRes = await axios.get(
+            `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}`,
+            { headers }
+          );
 
-        const version = nestedEntryRes.data.sys.version;
+          const version = nestedEntryRes.data.sys.version;
 
-        await axios.put(
-          `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}/published`,
-          {},
-          {
-            headers: {
-              ...headers,
-              "X-Contentful-Version": version,
-            },
-          }
-        );
-        console.log(`✅ Nested entry ${nestedId} published`);
-      } catch (nestedErr) {
-        console.warn(`⚠️ Failed to publish nested entry ${nestedId}`, nestedErr);
+          await axios.put(
+            `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${nestedId}/published`,
+            {},
+            {
+              headers: {
+                ...headers,
+                "X-Contentful-Version": version,
+              },
+            }
+          );
+          console.log(`✅ Nested entry ${nestedId} published`);
+        } catch (nestedErr) {
+          console.warn(
+            `⚠️ Failed to publish nested entry ${nestedId}`,
+            nestedErr
+          );
+        }
       }
+
+      // 🟢 Step 4: Publish main entry
+      await axios.put(
+        `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
+        {},
+        {
+          headers: {
+            ...headers,
+            "X-Contentful-Version": latestVersion,
+          },
+        }
+      );
+
+      alert(
+        "✅ Entry and nested entries successfully published to Contentful!"
+      );
+    } catch (err: any) {
+      console.error("❌ Publish error:", err?.response?.data || err);
+      alert("❌ Failed to publish to CMS.");
+    } finally {
+      setLoading(false);
     }
-
-    // 🟢 Step 4: Publish main entry
-    await axios.put(
-      `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${entryId}/published`,
-      {},
-      {
-        headers: {
-          ...headers,
-          "X-Contentful-Version": latestVersion,
-        },
-      }
-    );
-
-    alert("✅ Entry and nested entries successfully published to Contentful!");
-  } catch (err: any) {
-    console.error("❌ Publish error:", err?.response?.data || err);
-    alert("❌ Failed to publish to CMS.");
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
@@ -1018,9 +963,14 @@ export default function HomePage() {
       const assetId = await handleFileUpload(file, fieldKey);
       if (!assetId) return;
 
-      const imageUrl = `https://images.ctfassets.net/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID}/${assetId}`;
-      const imageTitle = file.name;
-
+      // ✅ Push directly into fieldsToSendRef so it reaches backend
+      fieldsToSendRef.current.push({
+        key: `${schemaKey}[${entryIndex}].${fieldKey}`,
+        actual_key: `${schemaKey}[${entryIndex}].${fieldKey}`,
+        value: {
+          sys: { id: assetId, linkType: "Asset", type: "Link" },
+        },
+      });
       // Replace preview with actual Contentful image
       setNestedSchemas((prev: any) => {
         const updated = structuredClone(prev);
@@ -1092,17 +1042,8 @@ export default function HomePage() {
         .querySelectorAll<HTMLSelectElement>("select.form-dropdown")
         .forEach((s) => {
           if (s.name && s.value) {
-            const entryReferences = ["author"];
             const assetReferences: string[] = [];
-            if (entryReferences.includes(s.name)) {
-              fieldsToSend.push({
-                key: s.name,
-                actual_key: s.name,
-                value: {
-                  sys: { id: s.value, linkType: "Entry", type: "Link" },
-                },
-              });
-            } else if (assetReferences.includes(s.name)) {
+            if (assetReferences.includes(s.name)) {
               fieldsToSend.push({
                 key: s.name,
                 actual_key: s.name,
@@ -1197,17 +1138,6 @@ export default function HomePage() {
         });
       });
 
-      // Author field
-      if (selectedAuthor) {
-        fieldsToSend.push({
-          key: "author",
-          actual_key: "author",
-          value: {
-            sys: { id: selectedAuthor, linkType: "Entry", type: "Link" },
-          },
-        });
-      }
-
       // Image field
       if (uploadedImageId) {
         fieldsToSend.push({
@@ -1219,6 +1149,28 @@ export default function HomePage() {
         });
       }
 
+      // 🔹 Pull nested images from nestedSchemas
+      Object.entries(nestedSchemas).forEach(([schemaKey, schema]) => {
+        if (!schema?.entries) return;
+
+        schema.entries.forEach((entry: { fields: any[] }, entryIndex: any) => {
+          if (!entry?.fields) return;
+
+          entry.fields.forEach((field) => {
+            if (
+              field?.value?.sys?.linkType === "Asset" &&
+              field?.value?.sys?.id // real asset ID
+            ) {
+              const nestedKey = `${schemaKey}[${entryIndex}].${field.actual_key}`;
+              fieldsToSend.push({
+                key: nestedKey,
+                actual_key: nestedKey,
+                value: field.value,
+              });
+            }
+          });
+        });
+      });
       // Expand global_fields and referenced schemas for backend matching
       function flattenSchemas(schemaList: any[]): any[] {
         const result: any[] = [];
@@ -1296,28 +1248,189 @@ export default function HomePage() {
 
         return result;
       }
-
-      //  Flatten full schema before sending to backend
-      console.log("🚀 contentTypeSchemas:", contentTypeSchemas); // Initial raw check
       const allSchemaObjects = flattenSchemas(contentTypeSchemas);
 
-      // ✅ Helpful debug logs before backend call
+      // ------------------- START: dynamic component-parent prefixing -------------------
+      // Build map: childComponentId -> [parentFieldId,...]
+      // (e.g. "componentProductBanner" => ["componentBlock"])
+
+      function stripArrayIndex(segment: string) {
+        return segment.replace(/\[\d+\]/g, ""); // removes [0], [1], etc.
+      }
+      let mergedFields = [
+        ...fieldsToSend, // the fields you normally collected from form
+        ...fieldsToSendRef.current, // the nested image fields pushed during upload
+      ];
+
+      const childToParents = new Map<string, string[]>();
+
+      function extractLinkedTypes(obj: any): string[] {
+        const set = new Set<string>();
+        if (!obj) return [];
+        if (Array.isArray(obj.linkContentType)) {
+          obj.linkContentType.forEach((v: string) => v && set.add(v));
+        }
+        if (Array.isArray(obj.validations)) {
+          for (const v of obj.validations) {
+            if (Array.isArray(v.linkContentType))
+              v.linkContentType.forEach((t: string) => t && set.add(t));
+          }
+        }
+        if (obj.items && Array.isArray(obj.items.validations)) {
+          for (const v of obj.items.validations) {
+            if (Array.isArray(v.linkContentType))
+              v.linkContentType.forEach((t: string) => t && set.add(t));
+          }
+        }
+        return Array.from(set);
+      }
+
+      // Walk allSchemaObjects and map childType -> parentFieldId
+      for (const schemaObj of allSchemaObjects || []) {
+        const parentId = schemaObj?.id;
+        if (!parentId) continue;
+        const linked = extractLinkedTypes(schemaObj);
+        for (const child of linked) {
+          const arr = childToParents.get(child) || [];
+          if (!arr.includes(parentId)) arr.push(parentId);
+          childToParents.set(child, arr);
+        }
+      }
       console.log(
-        "🚀 contentTypeSchemas:",
-        contentTypeSchemas.map((s) => s.id)
+        "🔗 Detected child→parent mapping:",
+        Object.fromEntries(childToParents)
       );
+
+      // Now prefix fields whose root key is a child component id with the matching parent(s)
+      fieldsToSend = mergedFields.map((f) => {
+        if (!f?.actual_key || typeof f.actual_key !== "string") return f;
+
+        // Clean both actual_key and key first
+        const cleanedActualKey = f.actual_key
+          .split(".")
+          .map(stripArrayIndex)
+          .join(".");
+        const cleanedKey = f.key
+          ? f.key.split(".").map(stripArrayIndex).join(".")
+          : undefined;
+        // if already has a parent prefix (contains a dot and first part matches a parent) skip
+
+        const parts = cleanedActualKey.split(".");
+        const root = parts[0];
+        const parents = childToParents.get(root);
+        if (!parents || parents.length === 0) {
+          return { ...f, actual_key: cleanedActualKey, key: cleanedKey };
+        }
+        const validParents = parents.filter((p) => p !== root);
+        if (validParents.length === 0) return f; // no valid parent to prefix
+        // Choose best parent: prefer one that is NOT equal to root, otherwise first available
+        const parent = validParents[0];
+        // If it's already prefixed with parent, do nothing
+        if (cleanedActualKey.startsWith(`${parent}.`)) {
+          return { ...f, actual_key: cleanedActualKey, key: cleanedKey };
+        }
+        // Build new keys with parent prefix
+        const newActual = `${parent}.${cleanedActualKey}`;
+        const newKey = f.key ? `${parent}.${cleanedKey}` : newActual;
+
+        return {
+          ...f,
+          actual_key: newActual,
+          key: newKey,
+        };
+      });
+      // ------------------- END: dynamic component-parent prefixing -------------------
       console.log(
-        "📦 Flattened schema (allSchemaObjects):",
-        allSchemaObjects.map((s) => s.id)
+        "DEBUG fieldsToSend:",
+        fieldsToSend.map((f) => f.actual_key)
       );
-      console.log("🧪 Payload before sending to backend:", {
+      // Step 1: Separate child fields from main fields
+      const childEntriesToCreate: Record<string, any[]> = {}; // childType -> fields[]
+      const remainingParentFields: typeof fieldsToSend = [];
+
+      for (const f of fieldsToSend) {
+        if (!f?.actual_key) continue;
+
+        const parts = f.actual_key.split(".").map(stripArrayIndex);
+
+        // Find if this path contains a child component id
+        const childTypeIndex = parts.findIndex((p) => childToParents.has(p));
+        if (childTypeIndex !== -1) {
+          const childType = parts[childTypeIndex];
+
+          // Always initialize the child array
+          if (!childEntriesToCreate[childType]) {
+            childEntriesToCreate[childType] = [];
+          }
+
+          // Strip the prefix (everything before childType) so child gets clean field keys
+          const newActualKey = parts.slice(childTypeIndex + 1).join(".");
+          const newKey = f.key
+            ?.split(".")
+            .slice(childTypeIndex + 1)
+            .join(".");
+
+          childEntriesToCreate[childType].push({
+            ...f,
+            actual_key: newActualKey,
+            key: newKey,
+          });
+        } else {
+          remainingParentFields.push(f);
+        }
+      }
+
+      // Step 2: Create child entries first
+      const childIdMap: Record<string, string> = {}; // rootField -> sys.id
+      for (const [childType, childFields] of Object.entries(
+        childEntriesToCreate
+      )) {
+        console.log(`🛠 Creating child entry for ${childType}`, childFields);
+        console.log("CHILD PAYLOAD", JSON.stringify(childFields, null, 2));
+        const childEntry = await createContentfulEntry(
+          childFields,
+          childType, // here we assume childType == contentTypeId
+          publish,
+          allSchemaObjects
+        );
+
+        if (!childEntry?.sys?.id)
+          throw new Error(`Failed to create child entry: ${childType}`);
+
+        childIdMap[childType] = childEntry.sys.id;
+      }
+
+      // Step 3: Replace child fields in parent payload with Link
+      for (const [childType, childId] of Object.entries(childIdMap)) {
+        const parentFields = childToParents.get(childType) || [];
+        for (const parentFieldId of parentFields) {
+          remainingParentFields.push({
+            key: parentFieldId,
+            actual_key: parentFieldId,
+            value: {
+              sys: {
+                type: "Link",
+                linkType: "Entry",
+                id: childId,
+              },
+            },
+          });
+        }
+      }
+
+      console.log("📤 Sending to backend:", {
         contentTypeId,
-        fieldsToSend: fieldsToSend.map((f) => ({ key: f.key, value: f.value })),
+        publish,
+        fieldsToSend: fieldsToSend.map((f) => ({
+          key: f.key,
+          actual_key: f.actual_key,
+          value: f.value,
+        })),
+        allSchemaObjects,
       });
 
       const entry = await createContentfulEntry(
-        fieldsToSend,
-
+        remainingParentFields,
         contentTypeId, //  Use the correct one
         publish,
         allSchemaObjects // backend now detects nested structure using this
@@ -1406,16 +1519,21 @@ export default function HomePage() {
       <p> No result received or result is not a valid object.</p>
     );
   }
-const formatLabel = (key: string) => {
-  return key
-    // insert space before capital letters (e.g. firstName → first Name)
-    .replace(/([A-Z])/g, ' $1')
-    // replace underscores/dashes with space
-    .replace(/[_-]/g, ' ')
-    // capitalize first letter of each word
-    .replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .trim();
-};
+  const formatLabel = (key: string) => {
+    return (
+      key
+        // insert space before capital letters (e.g. firstName → first Name)
+        .replace(/([A-Z])/g, " $1")
+        // replace underscores/dashes with space
+        .replace(/[_-]/g, " ")
+        // capitalize first letter of each word
+        .replace(
+          /\w\S*/g,
+          (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        )
+        .trim()
+    );
+  };
 
   const renderResult = () => {
     if (!result) {
@@ -1579,108 +1697,107 @@ const formatLabel = (key: string) => {
             if (groupKey === "_root") {
               return (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {fields
-                    .filter((item) => item.actual_key !== "author")
-                    .map((item, index) => {
-                      const actualKey = item.actual_key;
+                  {fields.map((item, index) => {
+                    const actualKey = item.actual_key;
 
-                      return (
-                        <div
-                          key={actualKey || index}
-                          className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
-                        >
-                          <div className="label-bar mb-2 flex justify-between items-center">
-                            <label
-                              htmlFor={actualKey}
-                              className="pl-2 font-semibold"
-                            >
-                              {formatLabel(item.key)} <span className="req">(Required)</span>
-                            </label>
-                            <span className="space-x-2 text-sm">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  regeneratePrompt(actualKey, item?.value)
-                                }
-                                className="text-blue-600 underline"
-                              >
-                                Regenerate
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  showRegeneratePromptPopup(actualKey)
-                                }
-                                className="text-blue-600 underline"
-                              >
-                                Prompt
-                              </button>
-                            </span>
-                          </div>
-
-                          {/* Render image or text field */}
-                          {item.type === "File" ||
-                          item.actual_type === "File" ||
-                          item.key?.toLowerCase().includes("image") ? (
-                            <>
-                              {item?.value?.url ? (
-                                <>
-                                  <img
-                                    src={item.value.url}
-                                    alt={item.value.title || actualKey}
-                                    className="max-w-xs rounded shadow mb-2"
-                                  />
-                                  <p className="text-xs text-gray-400">
-                                    {item.value.title || "Image selected"}
-                                  </p>
-                                </>
-                              ) : (
-                                <div className="text-sm text-gray-500 italic">
-                                  No image selected
-                                </div>
-                              )}
-
-                              <input
-                                type="file"
-                                id={`${actualKey}_input`}
-                                name={actualKey}
-                                accept="image/*"
-                                className="form-control mt-2"
-                                onChange={handleFileChange}
-                              />
-
-                              <button
-                                type="button"
-                                className="secondary-button ml-2"
-                                onClick={() =>
-                                  openImagePicker(actualKey, -1, actualKey)
-                                }
-                              >
-                                Select from Contentful
-                              </button>
-                            </>
-                          ) : (
-                            <textarea
-                              className="form-control form-textarea"
-                              id={actualKey}
-                              name={actualKey}
-                              defaultValue={
-                                typeof item.value === "object"
-                                  ? JSON.stringify(item.value, null, 2)
-                                  : item.value || ""
+                    return (
+                      <div
+                        key={actualKey || index}
+                        className="mb-4 bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg"
+                      >
+                        <div className="label-bar mb-2 flex justify-between items-center">
+                          <label
+                            htmlFor={actualKey}
+                            className="pl-2 font-semibold"
+                          >
+                            {formatLabel(item.key)}{" "}
+                            <span className="req">(Required)</span>
+                          </label>
+                          <span className="space-x-2 text-sm">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                regeneratePrompt(actualKey, item?.value)
                               }
-                              rows={Math.min(
-                                10,
-                                typeof item.value === "string"
-                                  ? item.value.split("\n").length + 1
-                                  : 4
-                              )}
-                              style={{ whiteSpace: "pre-wrap" }}
-                            />
-                          )}
+                              className="text-blue-600 underline"
+                            >
+                              Regenerate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                showRegeneratePromptPopup(actualKey)
+                              }
+                              className="text-blue-600 underline"
+                            >
+                              Prompt
+                            </button>
+                          </span>
                         </div>
-                      );
-                    })}
+
+                        {/* Render image or text field */}
+                        {item.type === "File" ||
+                        item.actual_type === "File" ||
+                        item.key?.toLowerCase().includes("image") ? (
+                          <>
+                            {item?.value?.url ? (
+                              <>
+                                <img
+                                  src={item.value.url}
+                                  alt={item.value.title || actualKey}
+                                  className="max-w-xs rounded shadow mb-2"
+                                />
+                                <p className="text-xs text-gray-400">
+                                  {item.value.title || "Image selected"}
+                                </p>
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500 italic">
+                                No image selected
+                              </div>
+                            )}
+
+                            <input
+                              type="file"
+                              id={`${actualKey}_input`}
+                              name={actualKey}
+                              accept="image/*"
+                              className="form-control mt-2"
+                              onChange={handleFileChange}
+                            />
+
+                            <button
+                              type="button"
+                              className="secondary-button ml-2"
+                              onClick={() =>
+                                openImagePicker(actualKey, -1, actualKey)
+                              }
+                            >
+                              Select from Contentful
+                            </button>
+                          </>
+                        ) : (
+                          <textarea
+                            className="form-control form-textarea"
+                            id={actualKey}
+                            name={actualKey}
+                            defaultValue={
+                              typeof item.value === "object"
+                                ? JSON.stringify(item.value, null, 2)
+                                : item.value || ""
+                            }
+                            rows={Math.min(
+                              10,
+                              typeof item.value === "string"
+                                ? item.value.split("\n").length + 1
+                                : 4
+                            )}
+                            style={{ whiteSpace: "pre-wrap" }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
             }
@@ -1705,7 +1822,7 @@ const formatLabel = (key: string) => {
                         className="bg-white border p-4 rounded shadow"
                       >
                         <label className="block font-medium mb-1">
-                         {formatLabel(fieldKey)}
+                          {formatLabel(fieldKey)}
                         </label>
 
                         {fieldKey.toLowerCase().includes("image") ? (
@@ -1816,22 +1933,6 @@ const formatLabel = (key: string) => {
             ))}
           </div>
 
-          <div className="form-group">
-            <label htmlFor="author">Author</label>
-            <select
-              id="author"
-              className="form-control"
-              value={selectedAuthor}
-              onChange={(e) => setSelectedAuthor(e.target.value)}
-            >
-              <option value="">Select Author</option>
-              {authors.map((author) => (
-                <option key={author.id} value={author.id}>
-                  {author.name}
-                </option>
-              ))}
-            </select>
-          </div>
           <div className="mb-4 flex justify-end bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg">
             <button
               type="button"
@@ -1866,7 +1967,7 @@ const formatLabel = (key: string) => {
             </button>
             <button
               className="primary-button active"
-              disabled={!result || !selectedAuthor || loading}
+              disabled={!result || loading}
               onClick={publishToCMS}
             >
               <svg
