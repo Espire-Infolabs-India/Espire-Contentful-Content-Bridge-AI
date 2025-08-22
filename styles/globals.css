@@ -168,6 +168,19 @@ h3 {
   @apply text-[20px] text-[var(--dark-gray-color)];
 }
 
+/* Fix for dropdown visibility */
+.form-control,
+.form-control option {
+  color: var(--dark-black-color) !important;
+  background-color: white !important;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--blue-color);
+  box-shadow: 0 0 0 2px rgba(108, 92, 231, 0.2);
+}
+
 header {
   @apply relative top-0 z-[99] border-b;
   border-color: var(--border-color);
