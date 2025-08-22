@@ -191,10 +191,33 @@ export default async function handler(req, res) {
             contents: [
               {
                 parts: [
-                  { text: `Rewrite in a more engaging style, but maintain all important details.\n\n${contentForAzure}` },
-                ],
-              },
-            ],
+                  {
+                    text: `
+You are an assistant that generates structured CMS content.
+
+Here is the content type schema:
+${JSON.stringify(simplifiedSchema, null, 2)}
+
+Please generate values for EACH field in this schema.
+Return the result STRICTLY as a valid JSON object where the keys EXACTLY match the schema field IDs.
+
+Example output:
+{
+  "title": "My Page",
+  "seo": { "title": "SEO title", "description": "SEO description" },
+  "url": "/my-page",
+  "sitemap": ["page"],
+  "componentContainer": [],
+  "site": "site1"
+}
+
+Input content:
+${contentForAzure}
+              `
+                  }
+                ]
+              }
+            ]
           },
           {
             headers: {
@@ -203,6 +226,7 @@ export default async function handler(req, res) {
             },
           }
         );
+
 
       } else {
         aiResponse = await axios.post(
@@ -230,16 +254,45 @@ export default async function handler(req, res) {
         content_type: simplifiedSchema,
       }, null, 2));
 
-      let result = aiResponse.data.result;
+      let result;
 
-      if (Array.isArray(result)) {
-        const converted = {};
-        for (const item of result) {
-          if (item?.reference) {
-            converted[item.reference] = item.value;
-          }
+      if (selectedModel === "gemini-2.0-flash") {
+        // Gemini returns a different structure
+        const geminiCandidates = aiResponse.data?.candidates;
+        let geminiText = geminiCandidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!geminiText) {
+          throw new Error("Gemini response did not include any text");
         }
-        result = converted;
+
+        // 🧹 Clean Gemini output (remove ```json ... ``` wrappers)
+        geminiText = geminiText.replace(/```json|```/g, "").trim();
+
+        try {
+          // ✅ Try to parse Gemini's output as JSON (structured by schema)
+          result = JSON.parse(geminiText);
+        } catch (err) {
+          console.error("⚠️ Gemini response was not valid JSON, using fallback:", geminiText);
+          // Fallback to plain text so at least something is returned
+          result = { generated_text: geminiText };
+        }
+
+
+      } else {
+        // Azure response
+        result = aiResponse.data.result;
+
+        if (Array.isArray(result)) {
+          const converted = {};
+          for (const item of result) {
+            if (item?.reference) {
+              converted[item.reference] = item.value;
+            }
+          }
+          result = converted;
+        }
+
+
 
         // ✅ Step 2: Add log after conversion
         console.log("✅ Normalized result:", result);

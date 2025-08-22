@@ -15,12 +15,14 @@ export default async function handler(req, res) {
         },
       }
     );
-
-      const contentTypes = response.data.items.map((item) => ({
-      uid: item.sys.id,
-      title: item.name,
-      options: { is_page: true },
-    }))
+const allowedIds = ["landingPage", "blogLandingPage"];
+const contentTypes = response.data.items
+  .filter(item => allowedIds.includes(item.sys.id))
+  .map(item => ({
+    uid: item.sys.id,
+    title: item.name,
+    options: { is_page: true },
+  }));
 
 
     res.status(200).json({ content_types: contentTypes });

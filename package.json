@@ -46,6 +46,7 @@
     "@types/pdf-parse": "^1.1.5",
     "@types/react": "18.2.14",
     "@types/react-dom": "18.2.6",
+    "@types/react-select": "^5.0.0",
     "autoprefixer": "^10.4.21",
     "eslint": "8.44.0",
     "eslint-config-next": "13.4.8",

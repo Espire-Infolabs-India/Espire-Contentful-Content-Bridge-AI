@@ -22,6 +22,7 @@ interface ContentfulField {
     linkContentType?: string[];
   }[];
   nestedFields?: any[];
+  uid?: string; // ✅ add this
 }
 
 interface ContentTypeSchema {
@@ -38,6 +39,8 @@ interface ContentTypeSchema {
     [key: string]: any;
   }[];
 }
+
+
 function convertToRichText(text: string) {
   return {
     nodeType: "document",
@@ -59,6 +62,34 @@ function convertToRichText(text: string) {
   };
 }
 
+// Recursively inject user-selected entries into fields
+function injectUserSelections(fields: any[], multiSelectValues: Record<string, string[]>) {
+  for (const field of fields) {
+    // Recurse into arrays
+    if (Array.isArray(field.value)) {
+      field.value.forEach((item: { [s: string]: unknown; } | ArrayLike<unknown> | null) => {
+        if (typeof item === "object" && item !== null) {
+          injectUserSelections(
+            Object.entries(item).map(([k, v]) => ({ actual_key: k, value: v })),
+            multiSelectValues
+          );
+        }
+      });
+    }
+
+    // Inject user-selected entries
+    const selectedIds = multiSelectValues[field.actual_key];
+    if (selectedIds && selectedIds.length > 0) {
+      field.value = selectedIds.map(id => ({
+        sys: { type: "Link", linkType: "Entry", id }
+      }));
+    }
+  }
+}
+
+
+
+
 function normalizeValueForContentful(value: any, schemaField: any) {
   if (!schemaField) return value;
 
@@ -68,11 +99,7 @@ function normalizeValueForContentful(value: any, schemaField: any) {
     return convertToRichText(value);
   }
 
-  if (
-    (type === "Text" || type === "Symbol") &&
-    typeof value === "object" &&
-    "value" in value
-  ) {
+  if ((type === "Text" || type === "Symbol") && typeof value === "object" && "value" in value) {
     return value.value;
   }
 
@@ -107,6 +134,7 @@ function normalizeValueForContentful(value: any, schemaField: any) {
   return value;
 }
 
+
 const wrapFieldsWithLocales = (fields: Record<string, any>) => {
   const wrapped: Record<string, any> = {};
   for (const [key, value] of Object.entries(fields)) {
@@ -114,6 +142,9 @@ const wrapFieldsWithLocales = (fields: Record<string, any>) => {
   }
   return wrapped;
 };
+
+
+
 
 const createNestedEntry = async (
   contentTypeId: string,
@@ -125,10 +156,8 @@ const createNestedEntry = async (
     fields: wrapFieldsWithLocales(fields),
   };
 
-  console.log(
-    "▶️ Creating Contentful entry with contentTypeId:",
-    contentTypeId
-  );
+
+  console.log("▶️ Creating Contentful entry with contentTypeId:", contentTypeId);
 
   const res = await axios.post(url, payload, {
     headers: {
@@ -157,30 +186,26 @@ const createNestedEntry = async (
   return createdEntry;
 };
 
+
+
 export const createContentfulEntry = async (
   fields: Field[],
   contentTypeId: string,
   publish: boolean = false,
   contentTypeSchemas: ContentTypeSchema[] = [],
-  incomingNestedSchemas: Record<
-    string,
-    { contentTypeId: string; entries: any[] }
-  > = {}
+  incomingNestedSchemas: Record<string, { contentTypeId: string; entries: any[] }> = {},
+  multiSelectValues: Record<string, string[]> = {} // ✅ add this
 ) => {
-  console.log(
-    "▶️ Creating Contentful entry with contentTypeId:",
-    contentTypeId
+  console.log("📥 Payload RECEIVED by createContentfulEntry:",
+    JSON.stringify(fields, null, 2)
   );
   try {
     const url = `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries`;
-    const payload: { fields: { [key: string]: { "en-US": any } } } = {
-      fields: {},
-    };
+    const payload: { fields: { [key: string]: { "en-US": any } } } = { fields: {} };
 
     // 👇 Prepare schema references
     let allSchemaObjects: any[] = [...contentTypeSchemas];
-    const rootGlobalFields =
-      contentTypeSchemas.filter((f) => f.data_type === "global_field") || [];
+    const rootGlobalFields = contentTypeSchemas.filter((f) => f.data_type === "global_field") || [];
     const rootGlobalFieldsArray = rootGlobalFields.flatMap((component) =>
       component?.schema?.map((obj: any) => ({
         ...obj,
@@ -195,21 +220,19 @@ export const createContentfulEntry = async (
     // 👇 Build grouped array fields like productBanner[0][title]
     // STEP 2: Build incomingNestedSchemas from both array-style and direct nested object values
     const groupedArrayFields = fields.reduce((acc, field) => {
-      const match = field.actual_key.match(
-        /^([a-zA-Z0-9_]+)\[(\d+)\]\[([a-zA-Z0-9_]+)\]$/
-      );
+      const match = field.actual_key.match(/^([a-zA-Z0-9_]+)\[(\d+)\]\[([a-zA-Z0-9_]+)\]$/);
       if (match) {
         const [_, arrayKey, index, subKey] = match;
         if (!acc[arrayKey]) acc[arrayKey] = [];
         if (!acc[arrayKey][+index]) acc[arrayKey][+index] = {};
-        acc[arrayKey][+index][subKey] =
-          typeof field.value === "object" && field.value?.value !== undefined
-            ? field.value.value
-            : field.value;
+        acc[arrayKey][+index][subKey] = typeof field.value === "object" && field.value?.value !== undefined
+          ? field.value.value
+          : field.value;
       }
       return acc;
     }, {} as Record<string, any[]>);
     console.log("🧮 Grouped (flattened) array fields:", groupedArrayFields);
+
 
     // 🧼 Remove flattened subfield keys
     for (const key of Object.keys(groupedArrayFields)) {
@@ -241,10 +264,8 @@ export const createContentfulEntry = async (
       }
     });
 
-    console.log(
-      "🧠 All schema field objects (merged):\n",
-      JSON.stringify(allSchemaObjects, null, 2)
-    );
+    console.log("🧠 All schema field objects (merged):\n", JSON.stringify(allSchemaObjects, null, 2));
+
 
     // ✅ ADD THIS BLOCK EARLY TO DETECT FLAT ARRAYS
     for (const field of fields) {
@@ -252,9 +273,7 @@ export const createContentfulEntry = async (
 
       console.log(`🔍 Scanning field: ${actual_key}`);
       if (Array.isArray(value)) {
-        console.log(
-          `🔎 Field ${actual_key} is an array with ${value.length} items`
-        );
+        console.log(`🔎 Field ${actual_key} is an array with ${value.length} items`);
         console.log(`📦 Sample value[0]:`, value[0]);
       }
 
@@ -267,9 +286,7 @@ export const createContentfulEntry = async (
       ) {
         // Look for a schema field matching this array key
         const schemaField =
-          allSchemaObjects.find(
-            (s) => s.id === actual_key || s.uid === actual_key
-          ) || {};
+          allSchemaObjects.find((s) => s.id === actual_key || s.uid === actual_key) || {};
         // Try to get the contentTypeId from validations, or fallback by matching id/uid
         const nestedContentTypeId =
           schemaField?.validations?.[0]?.linkContentType?.[0] ||
@@ -277,12 +294,21 @@ export const createContentfulEntry = async (
           schemaField?.items?.linkContentType?.[0] || // <== added
           schemaField?.items?.validations?.[0]?.linkContentType?.[0];
 
-        if (!nestedContentTypeId || nestedContentTypeId === contentTypeId) {
-          console.error(
-            `🚨 Skipping nested entry. Invalid or duplicate contentTypeId for "${actual_key}" — Got: "${nestedContentTypeId}"`
-          );
-          continue; // Skip instead of using wrong content type
+        if (!nestedContentTypeId) {
+          console.warn(`⚠️ No linked contentTypeId found for "${actual_key}". Falling back to treating as inline object.`);
+          // fallback: don’t skip, just push raw entries into incomingNestedSchemas
+          if (!incomingNestedSchemas[actual_key]) {
+            incomingNestedSchemas[actual_key] = {
+              contentTypeId: "__unknown__", // mark unknown, don’t break pipeline
+              entries: []
+            };
+          }
         }
+
+        if (nestedContentTypeId === contentTypeId) {
+          console.warn(`⚠️ Nested contentTypeId matches parent for "${actual_key}". This might be intentional (self-reference).`);
+        }
+
 
         if (!incomingNestedSchemas[actual_key]) {
           incomingNestedSchemas[actual_key] = {
@@ -290,10 +316,8 @@ export const createContentfulEntry = async (
             entries: [],
           };
         }
-        console.log(
-          "🧩 incomingNestedSchemas after array/object parse:",
-          JSON.stringify(incomingNestedSchemas, null, 2)
-        );
+        console.log("🧩 incomingNestedSchemas after array/object parse:", JSON.stringify(incomingNestedSchemas, null, 2));
+
 
         for (const entry of value) {
           if (typeof entry === "object" && entry !== null) {
@@ -301,108 +325,114 @@ export const createContentfulEntry = async (
           }
         }
 
-        console.log(
-          `✅ Detected nested array for ${actual_key} (type: ${contentTypeId})`
-        );
+        console.log(`✅ Detected nested array for ${actual_key} (type: ${contentTypeId})`);
       }
     }
 
-    console.log(
-      "🧩 incomingNestedSchemas:",
-      JSON.stringify(incomingNestedSchemas, null, 2)
-    );
+    console.log("🧩 incomingNestedSchemas:", JSON.stringify(incomingNestedSchemas, null, 2));
     // 👇 Build nestedSchemas structure
-    const builtNestedSchemas = Object.entries(groupedArrayFields).reduce(
-      (acc, [key, entries]) => {
-        // 🔍 Try to find matching schema field for this key
-        console.log("🔎 Checking allSchemaObjects for key:", key);
+    const builtNestedSchemas = Object.entries(groupedArrayFields).reduce((acc, [key, entries]) => {
+      // 🔍 Try to find matching schema field for this key
+      console.log("🔎 Checking allSchemaObjects for key:", key);
 
-        const schemaField = allSchemaObjects.find(
-          (s) =>
-            s.id === key &&
-            ((s.type === "Link" && s.linkType === "Entry") || // handles single reference
-              (s.type === "Array" &&
-                s.items?.type === "Link" &&
-                s.items?.linkType === "Entry")) // handles array of references
-        );
+      const schemaField = allSchemaObjects.find(
+        (s) =>
+          s.id === key &&
+          (
+            (s.type === "Link" && s.linkType === "Entry") ||  // handles single reference
+            (s.type === "Array" &&
+              s.items?.type === "Link" &&
+              s.items?.linkType === "Entry")                 // handles array of references
+          )
+      );
 
-        if (!schemaField) {
-          console.warn(`⚠️ Schema field not found for key: "${key}"`);
-          return acc;
-        }
-
-        // 🧠 Extract contentTypeId from validations
-        const contentTypeId =
-          schemaField?.validations?.[0]?.linkContentType?.[0] ||
-          schemaField?.items?.validations?.[0]?.linkContentType?.[0];
-
-        console.log("🔍 building nested for:", key, "=>", contentTypeId);
-
-        if (!contentTypeId) {
-          console.warn(`⚠️ No linked content type found for "${key}"`);
-          return acc;
-        }
-
-        // 📦 Attempt to resolve nestedFields
-        let nestedFields = schemaField?.nestedFields;
-
-        if (!nestedFields && contentTypeId) {
-          const childType =
-            contentTypeSchemas.find((c) => c.id === contentTypeId) ||
-            rootGlobalFieldsArray.find(
-              (s) => s?.uid === contentTypeId || s?.id === contentTypeId
-            );
-
-          nestedFields = childType?.fields || childType?.schema || [];
-        }
-
-        if (!nestedFields?.length) {
-          console.warn(
-            `⚠️ No nested fields found for "${key}" (contentTypeId: "${contentTypeId}")`
-          );
-          return acc;
-        }
-
-        const structured = entries.map((entryItem: any) => {
-          const obj: Record<string, any> = {};
-          nestedFields.forEach((nf: any) => {
-            const raw = entryItem[nf.id];
-            obj[nf.id] =
-              typeof raw === "object" && raw !== null && "value" in raw
-                ? raw.value
-                : raw;
-          });
-          return obj;
-        });
-
-        acc[key] = { entries: structured, contentTypeId };
+      if (!schemaField) {
+        console.warn(`⚠️ Schema field not found for key: "${key}"`);
         return acc;
-      },
-      {} as Record<string, { contentTypeId: string; entries: any[] }>
-    );
+      }
+
+      // 🧠 Extract contentTypeId from validations
+      const contentTypeId =
+        schemaField?.validations?.[0]?.linkContentType?.[0] ||
+        schemaField?.items?.validations?.[0]?.linkContentType?.[0];
+
+      console.log("🔍 building nested for:", key, "=>", contentTypeId);
+
+      if (!contentTypeId) {
+        console.warn(`⚠️ No linked content type found for "${key}"`);
+        return acc;
+      }
+
+      // 📦 Attempt to resolve nestedFields
+      let nestedFields = schemaField?.nestedFields;
+
+      if (!nestedFields && contentTypeId) {
+        const childType =
+          contentTypeSchemas.find((c) => c.id === contentTypeId) ||
+          rootGlobalFieldsArray.find((s) => s?.uid === contentTypeId || s?.id === contentTypeId);
+
+        nestedFields = childType?.fields || childType?.schema || [];
+      }
+
+      if (!nestedFields?.length) {
+        console.warn(`⚠️ No nested fields found for "${key}" (contentTypeId: "${contentTypeId}")`);
+        return acc;
+      }
+
+
+      const structured = entries.map((entryItem: any) => {
+        const obj: Record<string, any> = {};
+        nestedFields.forEach((nf: any) => {
+          const raw = entryItem[nf.id];
+          obj[nf.id] = typeof raw === "object" && raw !== null && "value" in raw ? raw.value : raw;
+        });
+        return obj;
+      });
+
+      acc[key] = { entries: structured, contentTypeId };
+      return acc;
+    }, {} as Record<string, { contentTypeId: string; entries: any[] }>);
 
     const nestedSchemas = { ...incomingNestedSchemas, ...builtNestedSchemas };
 
     // ✅ STEP 1: Create all nested entries first
     const nestedEntryLinks: Record<string, any[]> = {};
 
+
+
     for (const [fieldKey, schema] of Object.entries(nestedSchemas)) {
       if (!Array.isArray(schema.entries)) continue;
       if (!nestedEntryLinks[fieldKey]) nestedEntryLinks[fieldKey] = [];
-      for (const entryFields of schema.entries) {
-        console.log(
-          `🧱 Creating nested entry of type "${schema.contentTypeId}" for field "${fieldKey}"`
-        );
 
-        const nestedEntry = await createNestedEntry(
-          schema.contentTypeId,
-          entryFields,
-          publish
-        );
+      for (const entryFields of schema.entries) {
+        // ✅ Step 3A: Inject user selections for Link-type fields
+        const selectedIds = multiSelectValues[fieldKey]; // array of selected entry IDs
+        if (selectedIds && selectedIds.length > 0) {
+          for (const [nestedFieldKey, nestedFieldValue] of Object.entries(entryFields)) {
+            const schemaField = contentTypeSchemas
+              .flatMap(s => s.fields)
+              .find(f => f.id === nestedFieldKey || (f as any).uid === nestedFieldKey);
+
+            if (!schemaField) continue;
+            // ✅ NEW: Proper handling based on field type
+            if (schemaField.type === "Link") {
+              // Single reference
+              entryFields[nestedFieldKey] = {
+                sys: { type: "Link", linkType: "Entry", id: nestedFieldValue }
+              };
+            } else if (schemaField.type === "Array" && schemaField.items?.type === "Link") {
+              // Array of references
+              const ids = Array.isArray(nestedFieldValue) ? nestedFieldValue : [nestedFieldValue];
+              entryFields[nestedFieldKey] = ids.map(id => ({
+                sys: { type: "Link", linkType: "Entry", id }
+              }));
+            }
+          }
+        }
+
+        const nestedEntry = await createNestedEntry(schema.contentTypeId, entryFields, publish);
         // ✅ LOG THIS
-        console.log(
-          `✅ Created nested entry for ${fieldKey}: [Link id: ${nestedEntry.sys?.id}]`
-        );
+        console.log(`✅ Created nested entry for ${fieldKey}: [Link id: ${nestedEntry.sys?.id}]`);
         nestedEntryLinks[fieldKey].push({
           sys: {
             type: "Link",
@@ -412,32 +442,33 @@ export const createContentfulEntry = async (
         });
       }
     }
-
+    // ✅ ADD LOGS HERE
+    console.log("📌 User-selected nested links:", multiSelectValues);
+    console.log("📌 Nested entry links prepared:", nestedEntryLinks);
     for (const [fieldKey, links] of Object.entries(nestedEntryLinks)) {
       const field = fields.find((f) => f.actual_key === fieldKey);
       if (field) {
-        console.log(
-          `✅ Replacing raw nested field '${fieldKey}' with linked entries`
-        );
-        field.value = links;
+        // Initialize as array if undefined
+        if (!Array.isArray(field.value)) field.value = [];
+
+        // Merge links into the existing array
+        field.value = field.value.concat(links);
       }
     }
 
+    console.log("📌 Final links in componentContainer:", JSON.stringify(
+      fields.find(f => f.actual_key === "componentContainer")?.value, null, 2
+    ));
+
+
+
     // ✅ STEP 3: Sanity check debug log
-    console.log(
-      "🚧 Final fieldsToSend before entry creation:",
-      JSON.stringify(fields, null, 2)
-    );
+    console.log("🚧 Final fieldsToSend before entry creation:", JSON.stringify(fields, null, 2));
 
     fields.forEach((field) => {
       const key = field.actual_key;
       if (/\[[0-9]+\]\[.+\]/.test(key)) return; // Skip flattened subfields
-      if (
-        field.value === undefined ||
-        field.value === null ||
-        field.value === ""
-      )
-        return;
+      if (field.value === undefined || field.value === null || field.value === "") return;
 
       // Get schema for this field
       const schemaField = allSchemaObjects.find(
@@ -445,10 +476,7 @@ export const createContentfulEntry = async (
       );
 
       // Normalize according to schema
-      const normalizedValue = normalizeValueForContentful(
-        field.value,
-        schemaField
-      );
+      const normalizedValue = normalizeValueForContentful(field.value, schemaField);
 
       payload.fields[key] = { "en-US": normalizedValue };
     });
@@ -457,27 +485,32 @@ export const createContentfulEntry = async (
     const mergedFieldsMap: Record<string, any> = {};
 
     for (const field of fields) {
-      if (field.actual_key === "componentBlock") {
+      if (field.actual_key === "componentContainer") {
         if (!mergedFieldsMap[field.actual_key]) {
           mergedFieldsMap[field.actual_key] = [];
         }
-        mergedFieldsMap[field.actual_key].push(field.value);
+
+        // ✅ Flatten if field.value is already an array of links
+        if (Array.isArray(field.value)) {
+          mergedFieldsMap[field.actual_key].push(...field.value);
+        } else {
+          mergedFieldsMap[field.actual_key].push(field.value);
+        }
+
       } else {
         mergedFieldsMap[field.actual_key] = field.value;
       }
     }
 
+
     // Convert back to your fields array format
     const finalFields = Object.entries(mergedFieldsMap).map(([key, value]) => ({
       key,
       actual_key: key,
-      value,
+      value
     }));
 
-    console.log(
-      "🚀 Sending final merged fields:",
-      JSON.stringify(finalFields, null, 2)
-    );
+    console.log("🚀 Sending final merged fields:", JSON.stringify(finalFields, null, 2));
 
     // ✅ Rich Text fields in Contentful that need special formatting
     const richTextFields = ["description", "content"];
@@ -487,11 +520,21 @@ export const createContentfulEntry = async (
       fields: finalFields.reduce((acc, field) => {
         let value = field.value;
 
-        // If this is a Rich Text field and the value is a string → wrap in Rich Text JSON
-        if (
-          richTextFields.includes(field.actual_key) &&
-          typeof value === "string"
-        ) {
+        // ✅ normalize numbers
+        if (!isNaN(value) && value !== "" && value !== null && value !== undefined) {
+          // only if the value looks like a number (e.g. "0.8", "10")
+          value = Number(value);
+        }
+
+        // ✅ normalize booleans
+        if (value === "true" || value === true) {
+          value = true;
+        } else if (value === "false" || value === false) {
+          value = false;
+        }
+
+        // ✅ normalize rich text
+        if (richTextFields.includes(field.actual_key) && typeof field.value === "string") {
           value = {
             nodeType: "document",
             data: {},
@@ -502,33 +545,101 @@ export const createContentfulEntry = async (
                 content: [
                   {
                     nodeType: "text",
-                    value: value,
+                    value: field.value,
                     marks: [],
-                    data: {},
-                  },
-                ],
-              },
-            ],
+                    data: {}
+                  }
+                ]
+              }
+            ]
           };
         }
 
         acc[field.actual_key] = { "en-US": value };
         return acc;
-      }, {} as Record<string, any>),
+      }, {} as Record<string, any>)
     };
+
+
+    // Hardcoded fields that should always be array of links
+    const arrayLinkFields = [
+      "author",
+      "cardList",
+      "listOfSocialMedia",
+      "slides",
+      "accordionItemsList",
+      "tabs",
+    ];
+
+    for (const [key, wrapped] of Object.entries(finalPayload.fields)) {
+      console.log(`🔍 Processing field: "${key}"`);
+      console.log("   Value before normalization:", JSON.stringify(wrapped["en-US"], null, 2));
+
+      // ✅ Hardcoded array of links handling
+      if (arrayLinkFields.includes(key)) {
+        if (!Array.isArray(wrapped["en-US"])) {
+          console.log(`🔧 Hardcoded normalization: converting "${key}" to array`);
+          wrapped["en-US"] = [wrapped["en-US"]];
+        }
+        wrapped["en-US"] = wrapped["en-US"].map((id: any) => {
+          if (typeof id === "string") {
+            console.log(`🔗 Wrapping Link ID "${id}" for hardcoded array field "${key}"`);
+            return { sys: { type: "Link", linkType: "Entry", id } };
+          }
+          return id; // already a Link object
+        });
+
+        console.log("   Value after hardcoded normalization:", JSON.stringify(wrapped["en-US"], null, 2));
+        continue; // skip schema-based normalization for these fields
+      }
+
+      // Schema-based normalization
+      const schemaField = allSchemaObjects.find(s => s.id === key || s.uid === key);
+      if (!schemaField) {
+        console.log(`⚠️ No schema info for field "${key}", skipping Link normalization`);
+        continue;
+      }
+
+      // Normalize arrays for Array type fields
+      if (schemaField.type === "Array" && !Array.isArray(wrapped["en-US"])) {
+        console.log(`🔧 Normalizing field "${key}" to array`);
+        wrapped["en-US"] = [wrapped["en-US"]];
+      }
+
+      // Single Link field
+      if (schemaField.type === "Link") {
+        if (typeof wrapped["en-US"] === "string") {
+          console.log(`🔗 Wrapping single Link ID for "${key}"`);
+          wrapped["en-US"] = { sys: { type: "Link", linkType: "Entry", id: wrapped["en-US"] } };
+        }
+      }
+      // Array of Links
+      else if (schemaField.type === "Array" && schemaField.items?.type === "Link") {
+        wrapped["en-US"] = wrapped["en-US"].map((id: any) => {
+          if (typeof id === "string") {
+            console.log(`🔗 Wrapping Link ID "${id}" for array field "${key}"`);
+            return { sys: { type: "Link", linkType: "Entry", id } };
+          }
+          return id;
+        });
+      }
+      console.log("   Value after schema normalization:", JSON.stringify(wrapped["en-US"], null, 2));
+    }
+
+
 
     // ✅ STEP 4: Create main entry
     console.log("✅ FINAL contentTypeId:", contentTypeId);
     console.log("✅ FINAL URL:", url);
-    console.log(
-      "🧪 FINAL Payload before sending to Contentful:\n",
-      JSON.stringify(payload, null, 2)
-    );
+    console.log("🧪 FINAL Payload before sending to Contentful:\n", JSON.stringify(payload, null, 2));
     console.log("📎 Headers:", {
       Authorization: `Bearer ${managementToken?.slice(0, 8)}...`,
       "Content-Type": "application/vnd.contentful.management.v1+json",
       "X-Contentful-Content-Type": contentTypeId,
     });
+
+
+
 
     // ✅ STEP 4: Create main entry
     const response = await axios.post(url, finalPayload, {
@@ -558,10 +669,7 @@ export const createContentfulEntry = async (
 
     return createdMainEntry;
   } catch (error: any) {
-    console.error(
-      "❌ Error creating entry:",
-      error?.response?.data || error?.message || error
-    );
+    console.error("❌ Error creating entry:", error?.response?.data || error?.message || error);
     throw error;
   }
 };

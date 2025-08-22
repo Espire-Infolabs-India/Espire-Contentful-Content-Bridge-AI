@@ -133,3 +133,20 @@ button.primary-button:hover svg path {
 .new-page p{
   @apply text-[13px] font-normal leading-[20px];
 }
+
+@layer components {
+  /* Dropdown / Select styling */
+  .form-control {
+    @apply border border-[var(--border-color)] rounded px-2 py-1 text-[14px] bg-white;
+    color: var(--dark-black-color) !important;
+  }
+
+  .form-control option {
+    color: var(--dark-black-color) !important;
+    background-color: white !important;
+  }
+
+  .form-control:focus {
+    @apply outline-none ring-2 ring-[var(--blue-color)];
+  }
+}
