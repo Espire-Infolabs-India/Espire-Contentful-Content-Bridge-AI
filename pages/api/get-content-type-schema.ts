@@ -6,6 +6,46 @@ let cachedSchemas: Record<string, any> = {};
 let cacheTimestamps: Record<string, number> = {};
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// --- Cache for helpText maps to avoid duplicate API hits ---
+let cachedHelpTextMaps: Record<string, Record<string, string>> = {};
+
+// --- Global API request counter ---
+let contentfulRequestCount = 0;
+function logRequest(url: string) {
+  contentfulRequestCount++;
+  console.log(`📡 [API CALL #${contentfulRequestCount}] ${url}`);
+}
+
+// --- Throttled Contentful fetch with retry ---
+const RATE_LIMIT_DELAY = 150; // ms between requests (≈7/sec, safe under 10/sec)
+const MAX_RETRIES = 5;
+
+async function fetchContentful(url: string, options: any, attempt = 1): Promise<any> {
+  logRequest(url);
+
+  try {
+    const res = await axios.get(url, options);
+
+    // Throttle to avoid bursts
+    await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_DELAY));
+
+    return res.data;
+  } catch (err: any) {
+    if (
+      axios.isAxiosError(err) &&
+      err.response?.data?.sys?.id === "RateLimitExceeded" &&
+      attempt <= MAX_RETRIES
+    ) {
+      const waitTime = Math.pow(2, attempt) * 200; // exponential backoff
+      console.warn(`⏳ Rate limited, retrying in ${waitTime}ms (attempt ${attempt})`);
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      return fetchContentful(url, options, attempt + 1);
+    }
+
+    throw err;
+  }
+}
+
 // --- Helper: Recursively fetch content type schema ---
 async function fetchFieldsFromContentType(
   contentTypeId: string,
@@ -19,14 +59,12 @@ async function fetchFieldsFromContentType(
   if (visited.has(contentTypeId)) return [];
   visited.add(contentTypeId);
 
-  const res = await axios.get(
-    `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}`,
-    {
-      headers: { Authorization: `Bearer ${managementToken}` },
-    }
-  );
+  const url = `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}`;
+  const data = await fetchContentful(url, {
+    headers: { Authorization: `Bearer ${managementToken}` },
+  });
 
-  const fields = res.data.fields || [];
+  const fields = data.fields || [];
   nestedSchemas[contentTypeId] = fields;
 
   for (const field of fields) {
@@ -59,26 +97,31 @@ async function fetchFieldsFromContentType(
   return fields;
 }
 
-// --- Helper: Fetch helpText mapping ---
+// --- Helper: Fetch helpText mapping with caching ---
 async function fetchHelpTextMap(
   contentTypeId: string,
   spaceId: string,
   environmentId: string,
   managementToken: string
 ) {
-  const editorRes = await axios.get(
-    `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}/editor_interface`,
-    {
-      headers: { Authorization: `Bearer ${managementToken}` },
-    }
-  );
+  if (cachedHelpTextMaps[contentTypeId]) {
+    console.log(`✅ [Cache hit] HelpText map for ${contentTypeId}`);
+    return cachedHelpTextMaps[contentTypeId];
+  }
+
+  const url = `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/content_types/${contentTypeId}/editor_interface`;
+  const editorData = await fetchContentful(url, {
+    headers: { Authorization: `Bearer ${managementToken}` },
+  });
 
   const map: Record<string, string> = {};
-  for (const control of editorRes.data.controls || []) {
+  for (const control of editorData.controls || []) {
     if (control.fieldId && control.settings?.helpText) {
       map[control.fieldId] = control.settings.helpText;
     }
   }
+
+  cachedHelpTextMaps[contentTypeId] = map; // cache it
   return map;
 }
 
@@ -137,7 +180,6 @@ async function addNestedFields(
           managementToken
         );
       }
-
       parentField.nestedFields.push(nestedField);
     }
   }
@@ -156,11 +198,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
     const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN!;
 
-    // ✅ Use cache if available & not expired
     const now = Date.now();
     if (cachedSchemas[template] && now - cacheTimestamps[template] < CACHE_TTL) {
+      console.log(`✅ [Cache hit] Returning schema for ${template}`);
+      console.log(`📊 Total Contentful API calls so far: ${contentfulRequestCount}`);
       return res.status(200).json({ schema: cachedSchemas[template], cached: true });
     }
+
+    console.log(`🚀 [Start] Building schema for: ${template}`);
 
     // Fetch schema from Contentful
     const nestedSchemas: Record<string, any> = {};
@@ -211,9 +256,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       simplifiedSchema.push(simplifiedField);
     }
 
-    // ✅ Save in cache
     cachedSchemas[template] = simplifiedSchema;
     cacheTimestamps[template] = now;
+
+    console.log(`✅ [Done] Schema built for: ${template}`);
+    console.log(`📊 Total Contentful API calls so far: ${contentfulRequestCount}`);
 
     return res.status(200).json({ schema: simplifiedSchema, cached: false });
   } catch (error: any) {
