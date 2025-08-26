@@ -1,6 +1,11 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import axios from "axios";
 
+// --- In-memory cache (persists for the lifetime of a serverless instance) ---
+let cachedSchemas: Record<string, any> = {};
+let cacheTimestamps: Record<string, number> = {};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 // --- Helper: Recursively fetch content type schema ---
 async function fetchFieldsFromContentType(
   contentTypeId: string,
@@ -25,7 +30,7 @@ async function fetchFieldsFromContentType(
   nestedSchemas[contentTypeId] = fields;
 
   for (const field of fields) {
-    field._depth = depth; // ✅ Track depth at the field level
+    field._depth = depth;
     let refTypes: string[] | undefined;
 
     if (field.type === "Link" && field.linkType === "Entry") {
@@ -84,7 +89,7 @@ async function addNestedFields(
   nestedSchemas: Record<string, any>,
   spaceId: string,
   environmentId: string,
-  managementToken: string,
+  managementToken: string
 ) {
   parentField.linkContentType = refTypes;
   parentField.nestedFields = [];
@@ -104,22 +109,17 @@ async function addNestedFields(
         from: nestedType,
         _depth: depth,
         isTripleNested: depth === 3,
+        dropdownContentTypes:
+          nf.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          nf.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          [],
       };
 
-
-      // ✅ If triple nested, store the content type ID for later fetching by getReferenceFieldOptions
-// ✅ Always store content type IDs for dropdowns
-nestedField.dropdownContentTypes =
-  nf.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-  nf.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-  [];
-
-        // ✅ Stop recursion beyond depth 3
       if (depth >= 3) {
         parentField.nestedFields.push(nestedField);
         continue;
       }
-      // If still a reference, go deeper
+
       let childRefTypes: string[] | undefined;
       if (nf.type === "Link" && nf.linkType === "Entry") {
         childRefTypes = nf.validations?.find((v: any) => v.linkContentType)?.linkContentType;
@@ -134,7 +134,7 @@ nestedField.dropdownContentTypes =
           nestedSchemas,
           spaceId,
           environmentId,
-          managementToken,
+          managementToken
         );
       }
 
@@ -156,6 +156,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const environmentId = process.env.CONTENTFUL_ENVIRONMENT || "dev";
     const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN!;
 
+    // ✅ Use cache if available & not expired
+    const now = Date.now();
+    if (cachedSchemas[template] && now - cacheTimestamps[template] < CACHE_TTL) {
+      return res.status(200).json({ schema: cachedSchemas[template], cached: true });
+    }
+
+    // Fetch schema from Contentful
     const nestedSchemas: Record<string, any> = {};
     const rootFields = await fetchFieldsFromContentType(
       template,
@@ -167,8 +174,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const helpTextMap = await fetchHelpTextMap(template, spaceId, environmentId, managementToken);
 
     const simplifiedSchema: any[] = [];
-    
-
     for (const field of rootFields) {
       const simplifiedField: any = {
         id: field.id,
@@ -178,6 +183,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         type: field.type,
         _depth: field._depth || 1,
         isTripleNested: (field._depth || 1) >= 3,
+        dropdownContentTypes:
+          field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          field.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          [],
       };
 
       let refTypes: string[] | undefined;
@@ -188,12 +197,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
       }
 
-      // ✅ Add dropdown content types for frontend fetching
-simplifiedField.dropdownContentTypes =
-  field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-  field.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-  [];
-
       if (refTypes && refTypes.length > 0) {
         await addNestedFields(
           simplifiedField,
@@ -201,25 +204,31 @@ simplifiedField.dropdownContentTypes =
           nestedSchemas,
           spaceId,
           environmentId,
-          managementToken,
+          managementToken
         );
       }
 
       simplifiedSchema.push(simplifiedField);
     }
 
-    return res.status(200).json({
-      schema: simplifiedSchema,
-    });
+    // ✅ Save in cache
+    cachedSchemas[template] = simplifiedSchema;
+    cacheTimestamps[template] = now;
+
+    return res.status(200).json({ schema: simplifiedSchema, cached: false });
   } catch (error: any) {
     if (axios.isAxiosError(error)) {
       console.error("❌ Axios error:", error.response?.data || error.message);
+      if (error.response?.data?.sys?.id === "RateLimitExceeded") {
+        return res.status(429).json({
+          error: "Rate limit exceeded, please try again later",
+          details: error.response.data,
+        });
+      }
     } else {
       console.error("❌ Error:", error.message || error);
     }
 
-    return res.status(500).json({
-      error: "Failed to fetch content type schema",
-    });
+    return res.status(500).json({ error: "Failed to fetch content type schema" });
   }
 }
