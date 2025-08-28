@@ -34,7 +34,8 @@
     "openai": "^5.7.0",
     "pdf-parse": "^1.1.1",
     "react": "18.2.0",
-    "react-dom": "18.2.0"
+    "react-dom": "18.2.0",
+    "react-toastify": "^11.0.5"
   },
   "devDependencies": {
     "@contentful/app-scripts": "^2.3.0",
