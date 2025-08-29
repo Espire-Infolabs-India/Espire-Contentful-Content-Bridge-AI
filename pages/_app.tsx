@@ -14,6 +14,9 @@ import type { AppProps } from 'next/app';
 import { Props } from "../typescript/pages";
 import { EntryData, PageProps, Posts } from "../typescript/layout";
 
+import { ToastContainer } from 'react-toastify'; // ✅ import ToastContainer
+import 'react-toastify/dist/ReactToastify.css';  // ✅ import styles
+
 const theme = createTheme({
   palette: {
     primary: { main: '#1976d2' },
@@ -91,16 +94,16 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
   if (isInsideContentful === null) return null;
 
   if (isInsideContentful) {
-  return (
-    <SDKProvider>
-      <GlobalStyles />
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <Component {...pageProps} />
-      </ThemeProvider>
-    </SDKProvider>
-  );
-}
+    return (
+      <SDKProvider>
+        <GlobalStyles />
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <Component {...pageProps} />
+        </ThemeProvider>
+      </SDKProvider>
+    );
+  }
 
   return (
     <>
@@ -127,6 +130,20 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
           <Component {...pageProps} />
         </ThemeProvider>
       </Layout>
+
+      {/* ✅ Add ToastContainer at the root */}
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored"
+      />
     </>
   );
 }

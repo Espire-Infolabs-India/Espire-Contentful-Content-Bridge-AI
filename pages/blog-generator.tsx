@@ -4,6 +4,7 @@ import axios from "axios";
 import { createContentfulEntry } from "./api/create-entry";
 import Settings from "@/components/Settings";
 import Select from "react-select";
+import { toast } from "react-toastify";
 interface Field {
   key: string;
   actual_key: string;
@@ -11,7 +12,6 @@ interface Field {
 }
 let allowedFields: string[] = []; // ✅ Declare here (top of file, shared)
 export default function HomePage() {
-
   const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
   const [assetList, setAssetList] = useState([]);
   const [targetField, setTargetField] = useState<{
@@ -21,7 +21,9 @@ export default function HomePage() {
   } | null>(null);
   const fieldsToSendRef = useRef<any[]>([]);
   // Inside your component
-  const [multiSelectValues, setMultiSelectValues] = useState<Record<string, string[]>>({});
+  const [multiSelectValues, setMultiSelectValues] = useState<
+    Record<string, string[]>
+  >({});
   const [patchedSchemas, setPatchedSchemas] = useState([]);
   const [showGeneratedResult, setShowGeneratedResult] = useState(false);
   const [nestedSchemas, setNestedSchemas] = useState<any[]>([]);
@@ -41,8 +43,11 @@ export default function HomePage() {
   const [contentTypeResult, setContentTypeResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const imageAssetIdRef = useRef<string | null>(null);
-  const [referenceOptions, setReferenceOptions] = useState<Record<string, any[]>>({});
-
+  const [referenceOptions, setReferenceOptions] = useState<
+    Record<string, any[]>
+  >({});
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [aiModel, setAIModel] = useState<string>("");
   const [firstPage, setFirstPage] = useState(true);
   const [secondPage, setSecondPage] = useState(false);
@@ -94,7 +99,6 @@ export default function HomePage() {
     setAIModel((e.target as HTMLInputElement).value);
   };
 
-
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -134,7 +138,10 @@ export default function HomePage() {
           if (!node) return;
 
           // ✅ Check current node (root or nested) for dropdown content types
-          if (Array.isArray(node.dropdownContentTypes) && node.dropdownContentTypes.length > 0) {
+          if (
+            Array.isArray(node.dropdownContentTypes) &&
+            node.dropdownContentTypes.length > 0
+          ) {
             tripleMap[node.id] = node.dropdownContentTypes[0];
           }
 
@@ -150,7 +157,6 @@ export default function HomePage() {
           walk(f); // This will now handle root & nested
         }
 
-
         // 3) Fetch entries for each child field's content type
         const fetched: Record<string, any[]> = {};
         await Promise.all(
@@ -161,7 +167,8 @@ export default function HomePage() {
                   ct
                 )}&limit=1000`
               );
-              if (!r.ok) throw new Error(`Failed to fetch options for ${childId}`);
+              if (!r.ok)
+                throw new Error(`Failed to fetch options for ${childId}`);
               const { options } = await r.json();
               fetched[childId] = Array.isArray(options) ? options : [];
             } catch (e) {
@@ -172,7 +179,7 @@ export default function HomePage() {
         );
 
         // 4) Merge into referenceOptions state
-        setReferenceOptions(prev => ({ ...prev, ...fetched }));
+        setReferenceOptions((prev) => ({ ...prev, ...fetched }));
       } catch (err) {
         console.error("Schema/options fetch error:", err);
       }
@@ -180,7 +187,6 @@ export default function HomePage() {
 
     fetchSchemaAndOptions();
   }, [generatedContent, template]);
-
 
   const handleFileSelect = (file: File) => {
     if (url.trim()) {
@@ -281,127 +287,86 @@ export default function HomePage() {
     title: string;
     url: string;
   }) => {
-    if (!targetField) {
-      return;
-    }
+    console.log("handleSelectAsset called with asset:", asset); // 🔹 log incoming asset
+    if (!targetField) return;
 
     const { key: parentKey, entryIndex, fieldKey } = targetField;
-    if (!parentKey || typeof parentKey !== "string") {
-      return;
-    }
+    if (!parentKey || typeof parentKey !== "string") return;
 
-    if (entryIndex === -1) {
-      // Handle root-level image field in array-based result
-      setResult((prevResult: any[]) =>
-        prevResult.map((item) =>
-          item.actual_key === parentKey
-            ? {
-              ...item,
-              value: {
-                id: asset.id,
-                title: asset.title,
-                url: asset.url,
-              },
-            }
-            : item
-        )
-      );
-      setIsAssetPickerOpen(false);
-      alert(`Selected: ${asset.title}`);
-      return;
-    }
+    // ✅ newValue has sys for backend, _preview for UI only
+    const newValue = {
+      sys: { id: asset.id, linkType: "Asset", type: "Link" },
+      _preview: { url: asset.url, title: asset.title },
+    };
 
     // Update result (main form)
     setResult((prevResult: any) => {
       const updated = Array.isArray(prevResult) ? [...prevResult] : [];
-
       const schemaIndex = updated.findIndex(
         (item) => item.actual_key === parentKey
       );
-      if (schemaIndex === -1) {
-        return prevResult;
-      }
+      if (schemaIndex === -1) return prevResult;
 
       const schema = updated[schemaIndex];
       const schemaEntries = Array.isArray(schema.entries)
         ? [...schema.entries]
         : [];
 
-      const entry = schemaEntries[entryIndex];
-      if (!entry) {
-        return prevResult;
+      // Ensure entry exists
+      while (schemaEntries.length <= entryIndex) {
+        schemaEntries.push({ fields: [] });
       }
-      const updatedFields = Array.isArray(entry.fields)
-        ? [...entry.fields]
-        : [];
-      const fieldIdx = updatedFields.findIndex(
-        (f) => f.actual_key === fieldKey
+
+      const entry = schemaEntries[entryIndex];
+      if (!Array.isArray(entry.fields)) entry.fields = [];
+
+      const fieldIdx = entry.fields.findIndex(
+        (f: any) => f.actual_key === fieldKey
       );
       if (fieldIdx === -1) {
-        return prevResult;
+        entry.fields.push({ actual_key: fieldKey, value: newValue });
+      } else {
+        entry.fields[fieldIdx].value = newValue;
       }
 
-      updatedFields[fieldIdx] = {
-        ...updatedFields[fieldIdx],
-        value: {
-          id: asset.id,
-          title: asset.title,
-          url: asset.url,
-        },
-      };
-
-      const updatedEntry = { ...entry, fields: updatedFields };
-      schemaEntries[entryIndex] = updatedEntry;
+      schemaEntries[entryIndex] = entry;
       updated[schemaIndex] = { ...schema, entries: schemaEntries };
       return updated;
     });
-    //  Also update nestedSchemas
+
+    // Update nestedSchemas for JSX rendering
     setNestedSchemas((prevSchemas: any) => {
-      if (
-        !prevSchemas ||
-        typeof prevSchemas !== "object" ||
-        !(parentKey in prevSchemas)
-      ) {
-        return prevSchemas;
+      const updatedSchemas = { ...prevSchemas };
+      if (!updatedSchemas[parentKey])
+        updatedSchemas[parentKey] = { entries: [] };
+
+      const schema = updatedSchemas[parentKey];
+      if (!Array.isArray(schema.entries)) schema.entries = [];
+
+      // Ensure entry exists
+      while (schema.entries.length <= entryIndex) {
+        schema.entries.push({ fields: [] });
       }
-      const schema = prevSchemas[parentKey];
-      if (!schema) return prevSchemas;
-      const updatedSchema = { ...schema };
-      const updatedEntries = Array.isArray(updatedSchema.entries)
-        ? [...updatedSchema.entries]
-        : [];
-      const entry = updatedEntries[entryIndex];
-      if (!entry) {
-        console.warn(entryIndex);
-        return prevSchemas;
-      }
-      const updatedFields = Array.isArray(entry.fields)
-        ? [...entry.fields]
-        : [];
-      const fieldIdx = updatedFields.findIndex(
-        (f) => f.actual_key === fieldKey
+
+      const entry = schema.entries[entryIndex];
+      if (!Array.isArray(entry.fields)) entry.fields = [];
+
+      const fieldIdx = entry.fields.findIndex(
+        (f: any) => f.actual_key === fieldKey
       );
       if (fieldIdx === -1) {
-        return prevSchemas;
+        entry.fields.push({ actual_key: fieldKey, value: newValue });
+      } else {
+        entry.fields[fieldIdx].value = newValue;
       }
-      updatedFields[fieldIdx] = {
-        ...updatedFields[fieldIdx],
-        value: {
-          id: asset.id,
-          title: asset.title,
-          url: asset.url,
-        },
-      };
-      entry.fields = updatedFields;
-      updatedEntries[entryIndex] = entry;
-      updatedSchema.entries = updatedEntries;
-      return {
-        ...prevSchemas,
-        [parentKey]: updatedSchema,
-      };
+
+      schema.entries[entryIndex] = entry;
+      updatedSchemas[parentKey] = schema;
+
+      console.log("✅ Updated nestedSchemas:", updatedSchemas); // 🔹 check preview
+      return updatedSchemas;
     });
 
-    alert(` Selected: ${asset.title}`);
     setIsAssetPickerOpen(false);
   };
 
@@ -434,8 +399,9 @@ export default function HomePage() {
           return field.nestedFields.map((refSchema: any) => {
             const refFields = (refSchema.fields || [])
               .map((nestedField: any) => {
-                return `${nestedField.id}: (${nestedField.name || nestedField.id
-                  })`;
+                return `${nestedField.id}: (${
+                  nestedField.name || nestedField.id
+                })`;
               })
               .join(", ");
 
@@ -449,8 +415,9 @@ export default function HomePage() {
         if (Array.isArray(field.nestedFields)) {
           const nested = field.nestedFields
             .map((nestedField: any) => {
-              return `${nestedField.id}: (${nestedField.name || nestedField.id
-                })`;
+              return `${nestedField.id}: (${
+                nestedField.name || nestedField.id
+              })`;
             })
             .join(", ");
           return {
@@ -891,7 +858,6 @@ export default function HomePage() {
     setLoading(false);
   };
 
-
   const handleFileUpload = async (
     file: File,
     inputId: string
@@ -926,8 +892,10 @@ export default function HomePage() {
       };
 
       const assetResponse = await axios.post(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets`,
         assetPayload,
         {
@@ -941,8 +909,10 @@ export default function HomePage() {
       const assetId = assetResponse.data.sys.id;
       const assetVersion = assetResponse.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets/${assetId}/files/en-US/process`,
         {},
         {
@@ -959,8 +929,10 @@ export default function HomePage() {
         await new Promise((res) => setTimeout(res, 2000));
 
         check = await axios.get(
-          `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-          }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+          `https://api.contentful.com/spaces/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+          }/environments/${
+            process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
           }/assets/${assetId}`,
           {
             headers: {
@@ -980,8 +952,10 @@ export default function HomePage() {
       }
       const finalVersion = check.data.sys.version;
       await axios.put(
-        `https://api.contentful.com/spaces/${process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
-        }/environments/${process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
+        `https://api.contentful.com/spaces/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID
+        }/environments/${
+          process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev"
         }/assets/${assetId}/published`,
         {},
         {
@@ -1011,40 +985,54 @@ export default function HomePage() {
 
     const previewUrl = URL.createObjectURL(file);
 
-    // Show preview immediately (functional deep update)
+    // Show preview immediately
     setNestedSchemas((prev: any) => {
       const updated = structuredClone(prev);
-      const schema = updated[schemaKey];
-      if (!schema?.entries?.[entryIndex]?.fields) return prev;
+      let schema = updated[schemaKey];
 
-      const fields = schema.entries[entryIndex].fields;
-      const field = fields.find((f: any) => f.actual_key === fieldKey);
-      if (!field) return prev;
+      // Create schema if it doesn't exist
+      if (!schema) {
+        schema = { entries: [] };
+        updated[schemaKey] = schema;
+      }
 
+      // Ensure entry exists
+      while (!schema.entries[entryIndex]) {
+        schema.entries.push({ fields: [] });
+      }
+
+      const entry = schema.entries[entryIndex];
+      if (!Array.isArray(entry.fields)) entry.fields = [];
+
+      // Find field or create it
+      let field = entry.fields.find((f: any) => f.actual_key === fieldKey);
+      if (!field) {
+        field = { actual_key: fieldKey, value: null };
+        entry.fields.push(field);
+      }
+
+      // Set preview
       field.value = {
-        sys: {
-          id: "preview", // or any temporary placeholder
-          type: "Link",
-          linkType: "Asset",
-        },
-        previewUrl, // Optional custom field just for UI preview
-        title: file.name + " (preview)",
+        sys: { id: "preview", type: "Link", linkType: "Asset" },
+        _preview: { url: previewUrl, title: file.name + " (preview)" },
       };
+
       return updated;
     });
+
     try {
+      // Upload to Contentful
       const assetId = await handleFileUpload(file, fieldKey);
       if (!assetId) return;
 
-      // ✅ Push directly into fieldsToSendRef so it reaches backend
+      // Push to fieldsToSendRef for backend
       fieldsToSendRef.current.push({
         key: `${schemaKey}[${entryIndex}].${fieldKey}`,
         actual_key: `${schemaKey}[${entryIndex}].${fieldKey}`,
-        value: {
-          sys: { id: assetId, linkType: "Asset", type: "Link" },
-        },
+        value: { sys: { id: assetId, linkType: "Asset", type: "Link" } },
       });
-      // Replace preview with actual Contentful image
+
+      // Update nestedSchemas with real asset ID but keep _preview
       setNestedSchemas((prev: any) => {
         const updated = structuredClone(prev);
         const schema = updated[schemaKey];
@@ -1058,37 +1046,26 @@ export default function HomePage() {
               return {
                 ...field,
                 value: {
-                  sys: {
-                    id: assetId,
-                    linkType: "Asset",
-                    type: "Link",
-                  },
+                  sys: { id: assetId, linkType: "Asset", type: "Link" },
+                  _preview: field.value._preview, // keep preview
                 },
               };
             }
             return field;
           });
 
-          return {
-            ...entry,
-            fields: updatedFields,
-          };
+          return { ...entry, fields: updatedFields };
         });
 
-        updated[schemaKey] = {
-          ...schema,
-          entries: updatedEntries,
-        };
+        updated[schemaKey] = { ...schema, entries: updatedEntries };
         return updated;
       });
-      URL.revokeObjectURL(previewUrl); // optional cleanup
+
+      // ❌ Do NOT revoke previewUrl here
     } catch (err) {
       console.error("❌ Upload failed", err);
     }
   };
-
-
-
 
   const handleSubmit = async (
     publish: boolean,
@@ -1116,7 +1093,9 @@ export default function HomePage() {
 
       // ✅ Multi-select / checkboxes
       document
-        .querySelectorAll<HTMLInputElement>("input[type='checkbox'].form-checkbox")
+        .querySelectorAll<HTMLInputElement>(
+          "input[type='checkbox'].form-checkbox"
+        )
         .forEach((c) => {
           if (c.name && c.checked) {
             // Aggregate values for the same checkbox group
@@ -1165,7 +1144,8 @@ export default function HomePage() {
           fieldsToSend.push({
             key,
             actual_key: key,
-            value: selectedValues.length === 1 ? selectedValues[0] : selectedValues,
+            value:
+              selectedValues.length === 1 ? selectedValues[0] : selectedValues,
           });
         }
       });
@@ -1174,12 +1154,12 @@ export default function HomePage() {
       let safeResult = Array.isArray(result)
         ? result
         : Object.entries(result)
-          .filter(([key]) => isNaN(Number(key)))
-          .map(([key, value]) => ({
-            actual_key: key,
-            key,
-            value,
-          }));
+            .filter(([key]) => isNaN(Number(key)))
+            .map(([key, value]) => ({
+              actual_key: key,
+              key,
+              value,
+            }));
       const nestedKeysInForm = fieldsToSend
         .map((f) => f.key)
         .filter((k) => k.includes("["));
@@ -1254,7 +1234,7 @@ export default function HomePage() {
           actual_key: "image",
           value: {
             sys: { id: uploadedImageId, linkType: "Asset", type: "Link" },
-          },
+          }, // ✅ no _preview
         });
       }
 
@@ -1268,21 +1248,22 @@ export default function HomePage() {
           entry.fields.forEach((field) => {
             if (
               field?.value?.sys?.linkType === "Asset" &&
-              field?.value?.sys?.id // real asset ID
+              field?.value?.sys?.id
             ) {
               const nestedKey = `${schemaKey}[${entryIndex}].${field.actual_key}`;
+
+              // ✅ Strip _preview before sending to Contentful
+              const valueForContentful = { sys: { ...field.value.sys } };
+
               fieldsToSend.push({
                 key: nestedKey,
                 actual_key: nestedKey,
-                value: field.value,
+                value: valueForContentful,
               });
             }
           });
         });
       });
-
-
-
 
       // Expand global_fields and referenced schemas for backend matching
       function flattenSchemas(schemaList: any[]): any[] {
@@ -1376,12 +1357,17 @@ export default function HomePage() {
       function extractLinkedTypes(obj: any): string[] {
         const set = new Set<string>();
         if (!obj) return [];
-        if (Array.isArray(obj.linkContentType)) obj.linkContentType.forEach((v: string) => v && set.add(v));
+        if (Array.isArray(obj.linkContentType))
+          obj.linkContentType.forEach((v: string) => v && set.add(v));
         if (Array.isArray(obj.validations)) {
-          for (const v of obj.validations) if (Array.isArray(v.linkContentType)) v.linkContentType.forEach((t: string) => t && set.add(t));
+          for (const v of obj.validations)
+            if (Array.isArray(v.linkContentType))
+              v.linkContentType.forEach((t: string) => t && set.add(t));
         }
         if (obj.items && Array.isArray(obj.items.validations)) {
-          for (const v of obj.items.validations) if (Array.isArray(v.linkContentType)) v.linkContentType.forEach((t: string) => t && set.add(t));
+          for (const v of obj.items.validations)
+            if (Array.isArray(v.linkContentType))
+              v.linkContentType.forEach((t: string) => t && set.add(t));
         }
         return Array.from(set);
       }
@@ -1411,14 +1397,16 @@ export default function HomePage() {
 
             // If the field itself has nested fields, recurse
             if (Array.isArray(field.fields) && field.fields.length) {
-              mapNestedFields([{ ...field, id: field.id, fields: field.fields }], parentId);
+              mapNestedFields(
+                [{ ...field, id: field.id, fields: field.fields }],
+                parentId
+              );
             }
           }
         }
       }
 
       mapNestedFields(allSchemaObjects);
-
 
       // 4️⃣ Prefix all fields using both mappings
       function stripArrayIndex(segment: string) {
@@ -1441,7 +1429,6 @@ export default function HomePage() {
           tabs: "componentContainer.componentTabs",
         };
 
-
         if (topLevelParentMap[f.actual_key]) {
           const parent = topLevelParentMap[f.actual_key];
           const newActualKey = `${parent}.${f.actual_key}`;
@@ -1457,7 +1444,11 @@ export default function HomePage() {
         const parent = parentsFromChildMap[0] || parentFromNestedMap;
 
         // 🚫 Fix: prevent self-referencing parent (e.g., "seo" → "seo.seo")
-        if (!parent || parent === root || f.actual_key.startsWith(`${parent}.`)) {
+        if (
+          !parent ||
+          parent === root ||
+          f.actual_key.startsWith(`${parent}.`)
+        ) {
           return f;
         }
 
@@ -1552,12 +1543,10 @@ export default function HomePage() {
         }
       }
 
-      console.log("📤 Payload going OUT of handleSubmit → createContentfulEntry:",
+      console.log(
+        "📤 Payload going OUT of handleSubmit → createContentfulEntry:",
         JSON.stringify(remainingParentFields, null, 2)
       );
-
-
-
 
       const entry = await createContentfulEntry(
         remainingParentFields,
@@ -1586,10 +1575,10 @@ export default function HomePage() {
           throw new Error("Missing Contentful environment variables.");
         }
 
-        alert("Entry successfully published to Contentful!");
+        toast.success("Entry successfully published to Contentful!");
       } else {
         console.log("✅ Entry saved as draft:", entry);
-        alert("Entry saved as draft in Contentful.");
+        toast.info("Entry saved as draft in Contentful.");
       }
     } catch (err: unknown) {
       if (axios.isAxiosError(err)) {
@@ -1599,7 +1588,7 @@ export default function HomePage() {
       } else {
         console.error(" Submit error:", String(err));
       }
-      alert("One or more uploads failed.");
+      toast.error("One or more uploads failed.");
     } finally {
       setLoading(false);
     }
@@ -1692,7 +1681,6 @@ export default function HomePage() {
     return false;
   };
 
-
   const hasTripleNestedChildInList = (fields: any[]): boolean =>
     fields.some(
       (child: any) =>
@@ -1700,9 +1688,6 @@ export default function HomePage() {
         (Array.isArray(child.nestedFields) &&
           hasTripleNestedChildInList(child.nestedFields))
     );
-
-
-
 
   const renderResult = () => {
     if (!result) {
@@ -1906,8 +1891,8 @@ export default function HomePage() {
 
                         {/* Render image or text field */}
                         {item.type === "File" ||
-                          item.actual_type === "File" ||
-                          item.key?.toLowerCase().includes("image") ? (
+                        item.actual_type === "File" ||
+                        item.key?.toLowerCase().includes("image") ? (
                           <>
                             {item?.value?.url ? (
                               <>
@@ -1981,19 +1966,34 @@ export default function HomePage() {
                 </div>
 
                 <div className="flex flex-col gap-4">
-
                   {fields.map((field, fieldIndex) => {
-
                     const fieldKey = field.actual_key;
-                    const fieldValue = field.value;
+                    // ✅ Pull updated fields from nestedSchemas first
+                    const schemaEntries: any[] =
+                      (nestedSchemas as any)?.[groupKey]?.entries ?? [];
+
+                    // Try to get entry by index, fallback to searching by fieldKey
+                    const entry =
+                      schemaEntries[fieldIndex] ??
+                      schemaEntries.find((e: any) =>
+                        e.fields?.some((f: any) => f.actual_key === fieldKey)
+                      ) ??
+                      {};
+
+                    // Get the specific field
+                    const updatedField =
+                      entry.fields?.find(
+                        (f: any) => f.actual_key === fieldKey
+                      ) ?? field;
+                    const fieldValue = updatedField.value;
                     const selected = multiSelectValues[fieldKey] || [];
                     const tripleNested = hasTripleNestedChild(fieldKey, schema); // schemaData = full schema JSON
                     const dropdownOptions =
                       tripleNested && referenceOptions?.[fieldKey]
                         ? referenceOptions[fieldKey]
                         : tripleNested
-                          ? [] // still render dropdown even if options empty
-                          : [];
+                        ? [] // still render dropdown even if options empty
+                        : [];
                     return (
                       <div
                         key={`${groupKey}-${fieldKey}-${fieldIndex}`}
@@ -2005,25 +2005,54 @@ export default function HomePage() {
 
                         {/* 🔹 Reference field dropdown with left-side selected items */}
                         {tripleNested ? (
-                          <div className="multi-select-container" style={{ display: "flex", gap: "16px" }}>
+                          <div
+                            className="multi-select-container"
+                            style={{ display: "flex", gap: "16px" }}
+                          >
                             {/* Left: Selected items */}
-                            <div className="selected-items" style={{ minWidth: "150px", border: "1px solid #ccc", padding: "8px" }}>
+                            <div
+                              className="selected-items"
+                              style={{
+                                minWidth: "150px",
+                                border: "1px solid #ccc",
+                                padding: "8px",
+                              }}
+                            >
                               <strong>Selected:</strong>
                               {selected.length > 0 ? (
                                 selected.map((val) => {
-                                  const opt = dropdownOptions.find((o: any) => o.value === val);
-                                  return <div key={val}>{opt?.label || val}</div>;
+                                  const opt = dropdownOptions.find(
+                                    (o: any) => o.value === val
+                                  );
+                                  return (
+                                    <div key={val}>{opt?.label || val}</div>
+                                  );
                                 })
                               ) : (
-                                <div style={{ fontStyle: "italic" }}>None selected</div>
+                                <div style={{ fontStyle: "italic" }}>
+                                  None selected
+                                </div>
                               )}
                             </div>
 
                             {/* Right: Checkboxes */}
-                            <div className="checkbox-list" style={{ border: "1px solid #ccc", padding: "8px", flexGrow: 1 }}>
+                            <div
+                              className="checkbox-list"
+                              style={{
+                                border: "1px solid #ccc",
+                                padding: "8px",
+                                flexGrow: 1,
+                              }}
+                            >
                               {dropdownOptions.length > 0 ? (
                                 dropdownOptions.map((opt: any) => (
-                                  <label key={opt.value} style={{ display: "block", marginBottom: "4px" }}>
+                                  <label
+                                    key={opt.value}
+                                    style={{
+                                      display: "block",
+                                      marginBottom: "4px",
+                                    }}
+                                  >
                                     <input
                                       type="checkbox"
                                       value={opt.value}
@@ -2031,8 +2060,13 @@ export default function HomePage() {
                                       onChange={(e) => {
                                         const newSelected = e.target.checked
                                           ? [...selected, opt.value]
-                                          : selected.filter((v) => v !== opt.value);
-                                        setMultiSelectValues({ ...multiSelectValues, [fieldKey]: newSelected });
+                                          : selected.filter(
+                                              (v) => v !== opt.value
+                                            );
+                                        setMultiSelectValues({
+                                          ...multiSelectValues,
+                                          [fieldKey]: newSelected,
+                                        });
                                       }}
                                       style={{ marginRight: "8px" }}
                                     />
@@ -2044,82 +2078,96 @@ export default function HomePage() {
                               )}
                             </div>
                           </div>
-
-
-                        ) :
-                          fieldKey.toLowerCase().includes("image") ? (
-                            <>
-                              {fieldValue?.url ? (
-                                <>
-                                  <img
-                                    src={fieldValue.url}
-                                    alt={fieldValue?.title || fieldKey}
-                                    className="max-w-xs rounded shadow mb-2"
-
-                                  />
-                                  <p className="text-xs text-gray-400">
-                                    {fieldValue?.title || "Image selected"}
-                                  </p>
-                                </>
-                              ) : (
-                                <div className="text-sm text-gray-500 italic mb-2">
-                                  No image selected
-                                </div>
-                              )}
-
-                              <input
-                                type="file"
-                                name={`${groupKey}.${fieldKey}`}
-                                accept="image/*"
-                                className="form-input mt-2"
-                                onChange={(e) =>
-                                  handleNestedImageUpload(
-                                    e,
-                                    groupKey,
-                                    0,
+                        ) : fieldKey.toLowerCase().includes("image") ? (
+                          <>
+                            {fieldValue?._preview?.url ? (
+                              <>
+                                <img
+                                  src={
+                                    fieldValue?._preview?.url ??
+                                    (fieldValue?.url
+                                      ? `https:${fieldValue.url}`
+                                      : "")
+                                  }
+                                  alt={
+                                    fieldValue?._preview?.title ||
+                                    fieldValue?.title ||
                                     fieldKey
-                                  )
-                                }
-                              />
+                                  }
+                                  className="max-w-xs rounded shadow mb-2"
+                                />
+                                <p className="text-xs text-gray-400">
+                                  {fieldValue._preview.title ||
+                                    "Image selected"}
+                                </p>
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500 italic mb-2">
+                                No image selected
+                              </div>
+                            )}
 
-                              <button
-                                type="button"
-                                className="secondary-button ml-2"
-                                onClick={() =>
-                                  openImagePicker(groupKey, 0, fieldKey)
-                                }
-                              >
-                                Select from Contentful
-                              </button>
-                            </>
-                          ) : typeof fieldValue === "object" &&
-                            fieldValue?.url &&
-                            fieldValue?.title ? (
-                            <a
-                              href={fieldValue.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 underline"
-                            >
-                              {fieldValue.title}
-                            </a>
-                          ) : (
-                            <textarea
-                              className="form-control form-textarea"
+                            <input
+                              type="file"
                               name={`${groupKey}.${fieldKey}`}
-                              defaultValue={
-                                typeof fieldValue === "object"
-                                  ? JSON.stringify(fieldValue, null, 2)
-                                  : fieldValue || ""
-                              }
-                              rows={Math.min(
-                                10,
-                                typeof fieldValue === "string"
-                                  ? fieldValue.split("\n").length + 1
-                                  : 4
-                              )}
+                              accept="image/*"
+                              className="form-input mt-2"
+                              onChange={(e) => {
+                                handleNestedImageUpload(
+                                  e,
+                                  groupKey,
+                                  fieldIndex,
+                                  fieldKey
+                                );
+
+                                // ✅ Show toast when an image is selected
+                                if (
+                                  e.target.files &&
+                                  e.target.files.length > 0
+                                ) {
+                                  toast.success(`Image selected: ${fileName}`);
+                                }
+                              }}
                             />
-                          )}
+
+                            <button
+                              type="button"
+                              className="secondary-button ml-2"
+                              onClick={() =>
+                                openImagePicker(groupKey, fieldIndex, fieldKey)
+                              }
+                            >
+                              Select from Contentful
+                            </button>
+                          </>
+                        ) : typeof fieldValue === "object" &&
+                          fieldValue?.url &&
+                          fieldValue?.title ? (
+                          <a
+                            href={fieldValue.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 underline"
+                          >
+                            {fieldValue.title}
+                          </a>
+                        ) : (
+                          <textarea
+                            className="form-control form-textarea"
+                            name={`${groupKey}.${fieldKey}`}
+                            defaultValue={
+                              typeof fieldValue === "object"
+                                ? JSON.stringify(fieldValue, null, 2)
+                                : fieldValue || ""
+                            }
+                            rows={Math.min(
+                              10,
+                              typeof fieldValue === "string"
+                                ? fieldValue.split("\n").length + 1
+                                : 4
+                            )}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -2156,15 +2204,22 @@ export default function HomePage() {
             ))}
           </div>
 
-          <div className="mb-4 flex justify-end bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg">
+          <div className="mb-4 flex justify-end bg-white border-[var(--border-color)] border-[1px] p-4 rounded-lg ">
+            {/* Optional overlay if you want a general loader */}
+            {(saving || publishing) && (
+              <div className="absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center z-50 rounded-lg">
+                <div className="loader"></div>
+              </div>
+            )}
             <button
               type="button"
               className="primary-button"
-              onClick={() => {
-                console.log("Sending template to backend:", template);
-                handleSubmit(false, patchedSchemas, template);
+              onClick={async () => {
+                setSaving(true); // start save loader
+                await handleSubmit(false, patchedSchemas, template); // save draft
+                setSaving(false); // stop save loader
               }}
-              disabled={loading}
+              disabled={saving || publishing} // ✅ only one disabled here
             >
               <svg
                 width="18"
@@ -2186,12 +2241,16 @@ export default function HomePage() {
                   fill="#6C5CE7"
                 />
               </svg>
-              Save
+              {saving ? "Saving..." : "Save"}
             </button>
             <button
               className="primary-button active"
-              disabled={!result || loading}
-              onClick={publishToCMS}
+              onClick={async () => {
+                setPublishing(true);
+                await publishToCMS(); // your publish logic
+                setPublishing(false);
+              }}
+              disabled={!result || saving || publishing || loading} // ✅ only one disabled here
             >
               <svg
                 width="22"
@@ -2205,7 +2264,8 @@ export default function HomePage() {
                   fill="white"
                 />
               </svg>
-              {loading ? "Publishing..." : "Publish to CMS"}
+              {publishing ? "Publishing..." : "Publish to CMS"}{" "}
+              {/* Only Publish button text changes */}
             </button>
           </div>
         </form>
