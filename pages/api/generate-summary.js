@@ -37,9 +37,8 @@ export default async function handler(req, res) {
     const file = Array.isArray(files.pdf) ? files.pdf[0] : files.pdf;
 
     // 🔹 Get the selected AI model from frontend
-    const selectedModel = fields?.model?.toString()?.trim()?.toLowerCase() || "azure";
-    console.log("🤖 Selected AI Model:", selectedModel);
-
+    const selectedModel =
+      fields?.model?.toString()?.trim()?.toLowerCase() || "azure";
     if ((!file && !url) || (file && url)) {
       return res
         .status(400)
@@ -50,17 +49,14 @@ export default async function handler(req, res) {
       if (file?.mimetype === "application/pdf") {
         const filePath = file.filepath;
         contentForAzure = (await readPDFContent(filePath)).slice(0, 30000);
-        fs.unlink(filePath, () => { });
+        fs.unlink(filePath, () => {});
       } else if (url && /^https?:\/\//i.test(url.trim())) {
         contentForAzure = url.trim();
       } else if (url) {
-        return res
-          .status(400)
-          .json({
-            error: "Invalid URL format. Must start with http:// or https://.",
-          });
+        return res.status(400).json({
+          error: "Invalid URL format. Must start with http:// or https://.",
+        });
       }
-      // ✅ Fix 1: Ensure contentForAzure is not empty
       if (
         !contentForAzure ||
         typeof contentForAzure !== "string" ||
@@ -77,18 +73,9 @@ export default async function handler(req, res) {
             ? fields.content_type.join("")
             : fields.content_type.toString();
           contentTypeSchema = JSON.parse(rawSchema);
-
-          //  Debug: List all field ids and names from the schema
-          console.log("📥 Fetched Content Type Schema Fields:");
           for (const field of contentTypeSchema) {
-            console.log(
-              `🔧 Field ID: ${field.id}, Type: ${field.type}, Name: ${field.name}`
-            );
             if (field.type === "Array" && Array.isArray(field.nestedFields)) {
               for (const nested of field.nestedFields) {
-                console.log(
-                  `   └─ Nested Field → ID: ${nested.id}, Type: ${nested.type}, Name: ${nested.name}`
-                );
               }
             }
           }
@@ -101,10 +88,10 @@ export default async function handler(req, res) {
           (field) => field.type === "Array" && Array.isArray(field.nestedFields)
         )
         .map((field) => {
-          const allowedTypes =
-            field.validations?.find((v) => v.linkContentType)?.linkContentType || [
-              `component${field.id.charAt(0).toUpperCase()}${field.id.slice(1)}`,
-            ];
+          const allowedTypes = field.validations?.find((v) => v.linkContentType)
+            ?.linkContentType || [
+            `component${field.id.charAt(0).toUpperCase()}${field.id.slice(1)}`,
+          ];
 
           return {
             id: field.id,
@@ -140,8 +127,7 @@ export default async function handler(req, res) {
               helpText: nested.helpText,
               group: field.id,
               group_display_name: field.display_name,
-              from: nested.from // ✅ keep real source
-
+              from: nested.from, // ✅ keep real source
             });
           }
           continue;
@@ -149,22 +135,25 @@ export default async function handler(req, res) {
 
         // Case 3: Multi-reference fields (linked content types)
         if (field.items?.linkType === "Entry") {
-          const linkedTypes = field.validations?.find((v) => v.linkContentType)?.linkContentType || [];
+          const linkedTypes =
+            field.validations?.find((v) => v.linkContentType)
+              ?.linkContentType || [];
 
           for (const type of linkedTypes) {
             // Find the schema definition for this linked type
-            const linkedSchema = contentTypeSchema.find(f => f.contentTypeId === type && Array.isArray(f.nestedFields));
+            const linkedSchema = contentTypeSchema.find(
+              (f) => f.contentTypeId === type && Array.isArray(f.nestedFields)
+            );
 
             if (linkedSchema) {
               for (const nested of linkedSchema.nestedFields) {
                 simplifiedSchema.push({
-                  reference: `${field.id}.${nested.from}.${nested.id}`, // ✅ use nested.from
+                  reference: `${field.id}.${nested.from}.${nested.id}`,
                   display_name: nested.display_name,
                   helpText: nested.helpText,
                   group: field.id,
                   group_display_name: field.display_name,
-                  from: nested.from // ✅ keep real source
-
+                  from: nested.from, // ✅ keep real source
                 });
               }
             } else {
@@ -179,12 +168,8 @@ export default async function handler(req, res) {
           continue;
         }
       }
-
-      // console.log("🔍 Final contentForAzure:", contentForAzure);
-      //     console.log("📤 Sending to Azure:");
       let aiResponse;
       if (selectedModel === "gemini-2.0-flash") {
-        console.log("🚀 Sending request to Gemini API...");
         aiResponse = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent`,
           {
@@ -213,11 +198,11 @@ Example output:
 
 Input content:
 ${contentForAzure}
-              `
-                  }
-                ]
-              }
-            ]
+              `,
+                  },
+                ],
+              },
+            ],
           },
           {
             headers: {
@@ -226,8 +211,6 @@ ${contentForAzure}
             },
           }
         );
-
-
       } else {
         aiResponse = await axios.post(
           "https://cms-bot-cbsyo.eastus2.inference.ml.azure.com/score",
@@ -246,13 +229,6 @@ ${contentForAzure}
           }
         );
       }
-      console.log("📤 Payload being sent to Azure:");
-      console.log(JSON.stringify({
-        blob_url: contentForAzure,
-        user_prompt: "Rewrite in a more engaging style, but maintain all important details.",
-        brand_website_url: "https://www.oki.com/global/profile/brand/",
-        content_type: simplifiedSchema,
-      }, null, 2));
 
       let result;
 
@@ -272,12 +248,13 @@ ${contentForAzure}
           // ✅ Try to parse Gemini's output as JSON (structured by schema)
           result = JSON.parse(geminiText);
         } catch (err) {
-          console.error("⚠️ Gemini response was not valid JSON, using fallback:", geminiText);
+          console.error(
+            "⚠️ Gemini response was not valid JSON, using fallback:",
+            geminiText
+          );
           // Fallback to plain text so at least something is returned
           result = { generated_text: geminiText };
         }
-
-
       } else {
         // Azure response
         result = aiResponse.data.result;
@@ -291,11 +268,6 @@ ${contentForAzure}
           }
           result = converted;
         }
-
-
-
-        // ✅ Step 2: Add log after conversion
-        console.log("✅ Normalized result:", result);
       }
       const referenceFields = aiResponse.data.referenceFields || [];
       const fileFieldList = aiResponse.data.fileFieldList || [];
@@ -320,7 +292,7 @@ ${contentForAzure}
           try {
             const parsed = JSON.parse(result[key]);
             if (parsed && typeof parsed === "object") result[key] = parsed;
-          } catch { }
+          } catch {}
         }
       }
       // 🔧 Unwrap any { value: "..." } pattern into raw string
@@ -337,37 +309,41 @@ ${contentForAzure}
       // Normalize nested array fields using contentTypeSchemas
       const nestedSchemas = Array.isArray(contentTypeSchema)
         ? contentTypeSchema
-          .filter((field) => {
-            const value = result[field.id];
-            return (
-              Array.isArray(value) &&
-              value.length > 0 &&
-              value.every(
-                (entry) => typeof entry === "object" && !Array.isArray(entry)
-              )
-            );
-          })
-          .reduce((acc, field) => {
-            const value = result[field.id];
-            const arraySchema = contentTypeSchemas.find(
-              (schema) => schema.id === field.id
-            );
+            .filter((field) => {
+              const value = result[field.id];
+              return (
+                Array.isArray(value) &&
+                value.length > 0 &&
+                value.every(
+                  (entry) => typeof entry === "object" && !Array.isArray(entry)
+                )
+              );
+            })
+            .reduce((acc, field) => {
+              const value = result[field.id];
+              const arraySchema = contentTypeSchemas.find(
+                (schema) => schema.id === field.id
+              );
 
-            if (!arraySchema) return acc;
+              if (!arraySchema) return acc;
 
-            const nestedContentTypeId =
-              arraySchema.items.validations[0].linkContentType[0];
-            const entries = value.map((entry) => ({
-              fields: Object.entries(entry).map(([actual_key, value]) => ({
-                key: actual_key.replace(/([A-Z])/g, " $1").trim(),
-                actual_key,
-                value,
-              })),
-            }));
+              const nestedContentTypeId =
+                arraySchema.items.validations[0].linkContentType[0];
+              const entries = value.map((entry) => ({
+                fields: Object.entries(entry).map(([actual_key, value]) => ({
+                  key: actual_key.replace(/([A-Z])/g, " $1").trim(),
+                  actual_key,
+                  value,
+                })),
+              }));
 
-            acc[field.id] = { entries, contentTypeId: nestedContentTypeId, schema: field.nestedFields, };
-            return acc;
-          }, {})
+              acc[field.id] = {
+                entries,
+                contentTypeId: nestedContentTypeId,
+                schema: field.nestedFields,
+              };
+              return acc;
+            }, {})
         : {};
 
       const allowedFields =

@@ -13,14 +13,17 @@ let cachedHelpTextMaps: Record<string, Record<string, string>> = {};
 let contentfulRequestCount = 0;
 function logRequest(url: string) {
   contentfulRequestCount++;
-  console.log(`📡 [API CALL #${contentfulRequestCount}] ${url}`);
 }
 
 // --- Throttled Contentful fetch with retry ---
 const RATE_LIMIT_DELAY = 150; // ms between requests (≈7/sec, safe under 10/sec)
 const MAX_RETRIES = 5;
 
-async function fetchContentful(url: string, options: any, attempt = 1): Promise<any> {
+async function fetchContentful(
+  url: string,
+  options: any,
+  attempt = 1
+): Promise<any> {
   logRequest(url);
 
   try {
@@ -36,8 +39,7 @@ async function fetchContentful(url: string, options: any, attempt = 1): Promise<
       err.response?.data?.sys?.id === "RateLimitExceeded" &&
       attempt <= MAX_RETRIES
     ) {
-      const waitTime = Math.pow(2, attempt) * 200; // exponential backoff
-      console.warn(`⏳ Rate limited, retrying in ${waitTime}ms (attempt ${attempt})`);
+      const waitTime = Math.pow(2, attempt) * 200;
       await new Promise((resolve) => setTimeout(resolve, waitTime));
       return fetchContentful(url, options, attempt + 1);
     }
@@ -72,11 +74,15 @@ async function fetchFieldsFromContentType(
     let refTypes: string[] | undefined;
 
     if (field.type === "Link" && field.linkType === "Entry") {
-      refTypes = field.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+      refTypes = field.validations?.find(
+        (v: any) => v.linkContentType
+      )?.linkContentType;
     }
 
     if (field.type === "Array" && field.items?.linkType === "Entry") {
-      refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+      refTypes = field.items?.validations?.find(
+        (v: any) => v.linkContentType
+      )?.linkContentType;
     }
 
     if (refTypes) {
@@ -105,7 +111,6 @@ async function fetchHelpTextMap(
   managementToken: string
 ) {
   if (cachedHelpTextMaps[contentTypeId]) {
-    console.log(`✅ [Cache hit] HelpText map for ${contentTypeId}`);
     return cachedHelpTextMaps[contentTypeId];
   }
 
@@ -139,7 +144,12 @@ async function addNestedFields(
 
   for (const nestedType of refTypes) {
     const nestedFields = nestedSchemas[nestedType] || [];
-    const nestedHelpTextMap = await fetchHelpTextMap(nestedType, spaceId, environmentId, managementToken);
+    const nestedHelpTextMap = await fetchHelpTextMap(
+      nestedType,
+      spaceId,
+      environmentId,
+      managementToken
+    );
 
     for (const nf of nestedFields) {
       const depth = (parentField._depth || 1) + 1;
@@ -153,8 +163,10 @@ async function addNestedFields(
         _depth: depth,
         isTripleNested: depth === 3,
         dropdownContentTypes:
-          nf.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-          nf.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          nf.items?.validations?.find((v: any) => v.linkContentType)
+            ?.linkContentType ||
+          nf.validations?.find((v: any) => v.linkContentType)
+            ?.linkContentType ||
           [],
       };
 
@@ -165,10 +177,14 @@ async function addNestedFields(
 
       let childRefTypes: string[] | undefined;
       if (nf.type === "Link" && nf.linkType === "Entry") {
-        childRefTypes = nf.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+        childRefTypes = nf.validations?.find(
+          (v: any) => v.linkContentType
+        )?.linkContentType;
       }
       if (nf.type === "Array" && nf.items?.linkType === "Entry") {
-        childRefTypes = nf.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+        childRefTypes = nf.items?.validations?.find(
+          (v: any) => v.linkContentType
+        )?.linkContentType;
       }
       if (childRefTypes && childRefTypes.length > 0) {
         await addNestedFields(
@@ -186,11 +202,16 @@ async function addNestedFields(
 }
 
 // --- API Handler ---
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   const { template } = req.query;
 
   if (!template || typeof template !== "string") {
-    return res.status(400).json({ error: "Missing content type ID (`template`)" });
+    return res
+      .status(400)
+      .json({ error: "Missing content type ID (`template`)" });
   }
 
   try {
@@ -199,13 +220,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const managementToken = process.env.CONTENTFUL_MANAGEMENT_TOKEN!;
 
     const now = Date.now();
-    if (cachedSchemas[template] && now - cacheTimestamps[template] < CACHE_TTL) {
-      console.log(`✅ [Cache hit] Returning schema for ${template}`);
-      console.log(`📊 Total Contentful API calls so far: ${contentfulRequestCount}`);
-      return res.status(200).json({ schema: cachedSchemas[template], cached: true });
+    if (
+      cachedSchemas[template] &&
+      now - cacheTimestamps[template] < CACHE_TTL
+    ) {
+      return res
+        .status(200)
+        .json({ schema: cachedSchemas[template], cached: true });
     }
-
-    console.log(`🚀 [Start] Building schema for: ${template}`);
 
     // Fetch schema from Contentful
     const nestedSchemas: Record<string, any> = {};
@@ -216,7 +238,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       managementToken,
       nestedSchemas
     );
-    const helpTextMap = await fetchHelpTextMap(template, spaceId, environmentId, managementToken);
+    const helpTextMap = await fetchHelpTextMap(
+      template,
+      spaceId,
+      environmentId,
+      managementToken
+    );
 
     const simplifiedSchema: any[] = [];
     for (const field of rootFields) {
@@ -229,17 +256,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         _depth: field._depth || 1,
         isTripleNested: (field._depth || 1) >= 3,
         dropdownContentTypes:
-          field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
-          field.validations?.find((v: any) => v.linkContentType)?.linkContentType ||
+          field.items?.validations?.find((v: any) => v.linkContentType)
+            ?.linkContentType ||
+          field.validations?.find((v: any) => v.linkContentType)
+            ?.linkContentType ||
           [],
       };
 
       let refTypes: string[] | undefined;
       if (field.type === "Link" && field.linkType === "Entry") {
-        refTypes = field.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+        refTypes = field.validations?.find(
+          (v: any) => v.linkContentType
+        )?.linkContentType;
       }
       if (field.type === "Array" && field.items?.linkType === "Entry") {
-        refTypes = field.items?.validations?.find((v: any) => v.linkContentType)?.linkContentType;
+        refTypes = field.items?.validations?.find(
+          (v: any) => v.linkContentType
+        )?.linkContentType;
       }
 
       if (refTypes && refTypes.length > 0) {
@@ -259,9 +292,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     cachedSchemas[template] = simplifiedSchema;
     cacheTimestamps[template] = now;
 
-    console.log(`✅ [Done] Schema built for: ${template}`);
-    console.log(`📊 Total Contentful API calls so far: ${contentfulRequestCount}`);
-
     return res.status(200).json({ schema: simplifiedSchema, cached: false });
   } catch (error: any) {
     if (axios.isAxiosError(error)) {
@@ -276,6 +306,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.error("❌ Error:", error.message || error);
     }
 
-    return res.status(500).json({ error: "Failed to fetch content type schema" });
+    return res
+      .status(500)
+      .json({ error: "Failed to fetch content type schema" });
   }
 }
