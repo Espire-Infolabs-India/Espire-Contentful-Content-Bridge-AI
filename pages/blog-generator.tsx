@@ -108,9 +108,7 @@ export default function HomePage() {
         if (!res.ok) throw new Error("Failed to fetch content types");
         const data = await res.json();
         setContentTypeResult(data);
-      } catch (err) {
-        console.error("Fetch error:", err);
-      }
+      } catch (err) {}
     };
 
     fetchData();
@@ -172,7 +170,6 @@ export default function HomePage() {
               const { options } = await r.json();
               fetched[childId] = Array.isArray(options) ? options : [];
             } catch (e) {
-              console.error(e);
               fetched[childId] = [];
             }
           })
@@ -180,9 +177,7 @@ export default function HomePage() {
 
         // 4) Merge into referenceOptions state
         setReferenceOptions((prev) => ({ ...prev, ...fetched }));
-      } catch (err) {
-        console.error("Schema/options fetch error:", err);
-      }
+      } catch (err) {}
     };
 
     fetchSchemaAndOptions();
@@ -263,23 +258,13 @@ export default function HomePage() {
     entryIndex: number,
     fieldKey: string
   ) => {
-    try {
-      console.log("📸 Opening image picker for:", {
-        key,
-        entryIndex,
-        fieldKey,
-      });
+    const response = await fetch("/api/fetchAssets");
+    if (!response.ok) throw new Error("Failed to fetch assets");
 
-      const response = await fetch("/api/fetchAssets");
-      if (!response.ok) throw new Error("Failed to fetch assets");
-
-      const assets = await response.json();
-      setAssetList(assets);
-      setTargetField({ key, entryIndex, fieldKey });
-      setIsAssetPickerOpen(true);
-    } catch (error) {
-      console.error("Error fetching Contentful assets:", error);
-    }
+    const assets = await response.json();
+    setAssetList(assets);
+    setTargetField({ key, entryIndex, fieldKey });
+    setIsAssetPickerOpen(true);
   };
 
   const handleSelectAsset = (asset: {
@@ -287,13 +272,10 @@ export default function HomePage() {
     title: string;
     url: string;
   }) => {
-    console.log("handleSelectAsset called with asset:", asset); // 🔹 log incoming asset
     if (!targetField) return;
 
     const { key: parentKey, entryIndex, fieldKey } = targetField;
     if (!parentKey || typeof parentKey !== "string") return;
-
-    // ✅ newValue has sys for backend, _preview for UI only
     const newValue = {
       sys: { id: asset.id, linkType: "Asset", type: "Link" },
       _preview: { url: asset.url, title: asset.title },
@@ -359,11 +341,8 @@ export default function HomePage() {
       } else {
         entry.fields[fieldIdx].value = newValue;
       }
-
       schema.entries[entryIndex] = entry;
       updatedSchemas[parentKey] = schema;
-
-      console.log("✅ Updated nestedSchemas:", updatedSchemas); // 🔹 check preview
       return updatedSchemas;
     });
 
@@ -383,14 +362,9 @@ export default function HomePage() {
       );
       const schemaJson = await schemaRes.json();
       const schemaFields = schemaJson?.schema || [];
-
-      console.log(
-        "📜 Schema fetched from backend:",
-        JSON.stringify(schemaFields, null, 2)
-      );
       //Create Azure-style schema object (flat format, but still informative)
       const content_type = schemaFields.flatMap((field: any) => {
-        // ✅ MULTI-REFERENCE: field with nestedSchemas for each referenced type
+        //  MULTI-REFERENCE: field with nestedSchemas for each referenced type
         if (
           field.type === "Array" &&
           field.items?.linkType === "Entry" &&
@@ -446,8 +420,6 @@ export default function HomePage() {
       if (selectedFile) {
         formData.append("pdf", selectedFile);
       } else if (typeof url === "string" && url.trim().startsWith("http")) {
-        console.log("📎 URL value being sent:", JSON.stringify(url));
-
         formData.append("url", url.trim());
       } else {
         alert("Please provide a valid URL starting with http or https.");
@@ -471,10 +443,8 @@ export default function HomePage() {
         referenceFields,
         fileFieldList,
         nestedSchemas,
-        contentTypeSchema, // ✅ This will now be available as `data.contentTypeSchema`
+        contentTypeSchema,
       } = data;
-
-      // ✅ Inject linkContentType for known array fields
 
       const knownLinkTypes: Record<string, string> = {};
 
@@ -498,21 +468,9 @@ export default function HomePage() {
         }
         return field;
       });
-
-      console.log("🔧 Patched contentTypeSchema:", patchedSchema);
       setPatchedSchemas(patchedSchema);
 
       allowedFields = patchedSchema.map((f: any) => f.id);
-
-      console.log("🎯 generateContent -> API response:", {
-        result,
-        referenceFields,
-        fileFieldList,
-        allowedFields,
-        nestedSchemas,
-        contentTypeSchema,
-      });
-
       // Save for later triple-nested dropdown logic
       setGeneratedContent(result);
       setSchema(contentTypeSchema || []);
@@ -808,7 +766,6 @@ export default function HomePage() {
               },
             }
           );
-          console.log(`✅ Nested entry ${nestedId} published`);
         } catch (nestedErr) {
           console.warn(
             `⚠️ Failed to publish nested entry ${nestedId}`,
@@ -833,13 +790,11 @@ export default function HomePage() {
         "✅ Entry and nested entries successfully published to Contentful!"
       );
     } catch (err: any) {
-      console.error("❌ Publish error:", err?.response?.data || err);
       alert("❌ Failed to publish to CMS.");
     } finally {
       setLoading(false);
     }
   };
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const input = e.target as HTMLInputElement;
@@ -1067,6 +1022,19 @@ export default function HomePage() {
     }
   };
 
+  function getFullPathFromResult(result: any, key: string): string | null {
+    for (const groupKey in result) {
+      const group = result[groupKey];
+      if (Array.isArray(group)) {
+        for (const field of group) {
+          if (field.actual_key === key) {
+            return field.key; // ✅ full dot-notation path
+          }
+        }
+      }
+    }
+    return null;
+  }
   const handleSubmit = async (
     publish: boolean,
     contentTypeSchemas: any[],
@@ -1076,7 +1044,6 @@ export default function HomePage() {
       setLoading(true);
 
       let fieldsToSend: Field[] = [];
-
       // Textareas
       document
         .querySelectorAll<HTMLTextAreaElement>("textarea.form-textarea")
@@ -1137,15 +1104,15 @@ export default function HomePage() {
             }
           }
         });
-
-      // Include multi-select values in fieldsToSend
       Object.entries(multiSelectValues).forEach(([key, selectedValues]) => {
         if (selectedValues && selectedValues.length) {
+          // ✅ Find full dot-notation from schema
+          const fullPath = getFullPathFromResult(result, key) || key;
+
           fieldsToSend.push({
             key,
-            actual_key: key,
-            value:
-              selectedValues.length === 1 ? selectedValues[0] : selectedValues,
+            actual_key: fullPath, // dot-notation path
+            value: selectedValues, // ✅ always send array, never single item
           });
         }
       });
@@ -1164,7 +1131,7 @@ export default function HomePage() {
         .map((f) => f.key)
         .filter((k) => k.includes("["));
       const topLevelKeysToSkip = new Set(
-        nestedKeysInForm.map((k) => k.split("[")[0]) // Extract parent keys like 'productBanner'
+        nestedKeysInForm.map((k) => k.split("[")[0])
       );
       const seenKeys = new Set(fieldsToSend.map((f) => f.key));
       safeResult = safeResult.filter(
@@ -1177,7 +1144,7 @@ export default function HomePage() {
           !item.actual_key ||
           item.value === undefined ||
           item.value === null ||
-          alreadyExists || // Skip if already exists
+          alreadyExists ||
           !allowedFields.includes(item.actual_key)
         )
           return;
@@ -1312,10 +1279,6 @@ export default function HomePage() {
               }
               //  Add debug here
               if (field.linkContentType || field?.items?.validations) {
-                console.log("🔍 Link field types:", {
-                  linkContentType: field.linkContentType,
-                  itemsValidations: field?.items?.validations,
-                });
               }
               const nestedTypeIds =
                 field?.validations?.[0]?.linkContentType ||
@@ -1419,23 +1382,6 @@ export default function HomePage() {
         const parts = f.actual_key.split(".").map(stripArrayIndex);
         const root = parts[0];
 
-        // ✅ 1️⃣ Force top-level nested fields to include their parent
-        const topLevelParentMap: Record<string, string> = {
-          author: "componentContainer.componentBlog",
-          cardList: "componentContainer.componentFeatureCard",
-          listOfSocialMedia: "componentContainer.componentSocialMedia",
-          slides: "componentContainer.componentCarousel",
-          accordionItemsList: "componentContainer.componentAccordion",
-          tabs: "componentContainer.componentTabs",
-        };
-
-        if (topLevelParentMap[f.actual_key]) {
-          const parent = topLevelParentMap[f.actual_key];
-          const newActualKey = `${parent}.${f.actual_key}`;
-          const newKey = f.key ? `${parent}.${f.key}` : newActualKey;
-          return { ...f, actual_key: newActualKey, key: newKey };
-        }
-
         // ✅ 2️⃣ Existing dynamic prefixing for other nested fields
         const parentsFromChildMap = childToParents.get(root) || [];
         const parentFromNestedMap = nestedFieldToParent.get(root);
@@ -1461,16 +1407,8 @@ export default function HomePage() {
           key: newKey,
         };
       });
-
-      // ------------------- END: dynamic component-parent prefixing -------------------
-
-      // ------------------- END: dynamic component-parent prefixing -------------------
-      console.log(
-        "DEBUG fieldsToSend:",
-        fieldsToSend.map((f) => f.actual_key)
-      );
       // Step 1: Separate child fields from main fields
-      const childEntriesToCreate: Record<string, any[]> = {}; // childType -> fields[]
+      const childEntriesToCreate: Record<string, any[]> = {};
       const remainingParentFields: typeof fieldsToSend = [];
 
       for (const f of fieldsToSend) {
@@ -1504,14 +1442,11 @@ export default function HomePage() {
           remainingParentFields.push(f);
         }
       }
-
       // Step 2: Create child entries first
       const childIdMap: Record<string, string> = {}; // rootField -> sys.id
       for (const [childType, childFields] of Object.entries(
         childEntriesToCreate
       )) {
-        console.log(`🛠 Creating child entry for ${childType}`, childFields);
-        console.log("CHILD PAYLOAD", JSON.stringify(childFields, null, 2));
         const childEntry = await createContentfulEntry(
           childFields,
           childType, // here we assume childType == contentTypeId
@@ -1543,18 +1478,13 @@ export default function HomePage() {
         }
       }
 
-      console.log(
-        "📤 Payload going OUT of handleSubmit → createContentfulEntry:",
-        JSON.stringify(remainingParentFields, null, 2)
-      );
-
       const entry = await createContentfulEntry(
         remainingParentFields,
-        contentTypeId, //  Use the correct one
+        contentTypeId,
         publish,
-        allSchemaObjects, // backend now detects nested structure using this
-        {}, // incomingNestedSchemas
-        multiSelectValues // ✅ pass it here
+        allSchemaObjects,
+        {},
+        multiSelectValues
       );
 
       if (!entry?.sys?.id || !entry?.sys?.version) {
@@ -1577,7 +1507,6 @@ export default function HomePage() {
 
         toast.success("Entry successfully published to Contentful!");
       } else {
-        console.log("✅ Entry saved as draft:", entry);
         toast.info("Entry saved as draft in Contentful.");
       }
     } catch (err: unknown) {
@@ -1598,7 +1527,7 @@ export default function HomePage() {
   if (Array.isArray(result)) {
     result.forEach((item, i) => {
       console.log(
-        `🧪 [${i}] actual_key: ${item?.actual_key} | type of value:`,
+        ` [${i}] actual_key: ${item?.actual_key} | type of value:`,
         typeof item?.value,
         item?.value
       );
