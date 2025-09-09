@@ -2,11 +2,12 @@ import { useState } from "react";
 
 interface SettingsProps {
   model: string;
-  setAIModel: (value: React.SyntheticEvent) => void;
+  setAIModel: (model: string) => void; // Accept a string
 }
 
 const Settings: React.FC<SettingsProps> = ({ model, setAIModel }) => {
   const [isModalOpen, setModalOpen] = useState(false);
+
   return (
     <div>
       <div className="flex justify-end gap-2">
@@ -26,14 +27,18 @@ const Settings: React.FC<SettingsProps> = ({ model, setAIModel }) => {
               <button onClick={() => setModalOpen(false)}>X</button>
             </div>
 
-            <div className="mb-4 ">
+            <div className="mb-4">
               <label className="block mb-1 text-black py-3">Model:</label>
-             <select value={model} onChange={(e) => setAIModel(e)} className="form-select form-dropdown form-textarea">
-  <option value="">-- Select a model --</option>
-  <option value="gemini-2.0-flash">Gemini 2.0 Pro</option>
-  <option value="claude-3-opus">Claude 3 Opus</option>
-  <option value="gpt-4-turbo">GPT-4 Turbo</option>
-</select>
+              <select
+                value={model}
+                onChange={(e) => setAIModel(e.target.value)} // Extract the string value
+                className="form-select form-dropdown form-textarea"
+              >
+                <option value="">-- Select a model --</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Pro</option>
+                <option value="claude-3-opus">Claude 3 Opus</option>
+                <option value="gpt-4-turbo">GPT-4 Turbo</option>
+              </select>
             </div>
 
             <div className="flex justify-end gap-2">

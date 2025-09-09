@@ -126,7 +126,7 @@ async function fetchHelpTextMap(
     }
   }
 
-  cachedHelpTextMaps[contentTypeId] = map; // cache it
+  cachedHelpTextMaps[contentTypeId] = map;
   return map;
 }
 
@@ -295,7 +295,7 @@ export default async function handler(
     return res.status(200).json({ schema: simplifiedSchema, cached: false });
   } catch (error: any) {
     if (axios.isAxiosError(error)) {
-      console.error("❌ Axios error:", error.response?.data || error.message);
+      console.error(" Axios error:", error.response?.data || error.message);
       if (error.response?.data?.sys?.id === "RateLimitExceeded") {
         return res.status(429).json({
           error: "Rate limit exceeded, please try again later",
@@ -303,7 +303,7 @@ export default async function handler(
         });
       }
     } else {
-      console.error("❌ Error:", error.message || error);
+      console.error(" Error:", error.message || error);
     }
 
     return res
