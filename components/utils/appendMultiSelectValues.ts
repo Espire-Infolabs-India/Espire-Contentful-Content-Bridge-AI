@@ -1,0 +1,27 @@
+// src/utils/appendMultiSelectValues.ts
+import { Field } from "../types";
+
+/**
+ * Append multi-select values to fieldsToSend.
+ * - fieldsToSend is mutated in-place.
+ * - getFullPathFromResult must return a string (fallback to key).
+ */
+export function appendMultiSelectValues(
+  fieldsToSend: Field[],
+  multiSelectValues: Record<string, any[]> | undefined,
+  result: any,
+  getFullPathFromResult: (result: any, key: string) => string
+): void {
+  if (!multiSelectValues) return;
+
+  Object.entries(multiSelectValues).forEach(([key, selectedValues]) => {
+    if (selectedValues && selectedValues.length) {
+      const fullPath = getFullPathFromResult(result, key) || key;
+      fieldsToSend.push({
+        key,
+        actual_key: fullPath,
+        value: Array.isArray(selectedValues) ? selectedValues : [selectedValues],
+      });
+    }
+  });
+}

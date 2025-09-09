@@ -122,12 +122,12 @@ export default async function handler(req, res) {
         if (Array.isArray(field.nestedFields)) {
           for (const nested of field.nestedFields) {
             simplifiedSchema.push({
-              reference: `${field.id}.${nested.from}.${nested.id}`, // ✅ use nested.from
+              reference: `${field.id}.${nested.from}.${nested.id}`,
               display_name: nested.display_name,
               helpText: nested.helpText,
               group: field.id,
               group_display_name: field.display_name,
-              from: nested.from, // ✅ keep real source
+              from: nested.from,
             });
           }
           continue;
@@ -153,7 +153,7 @@ export default async function handler(req, res) {
                   helpText: nested.helpText,
                   group: field.id,
                   group_display_name: field.display_name,
-                  from: nested.from, // ✅ keep real source
+                  from: nested.from, //
                 });
               }
             } else {
@@ -295,7 +295,7 @@ ${contentForAzure}
           } catch {}
         }
       }
-      // 🔧 Unwrap any { value: "..." } pattern into raw string
+      // Unwrap any { value: "..." } pattern into raw string
       for (const key in result) {
         if (
           result[key] &&
