@@ -15,9 +15,9 @@ const Navigation: React.FC<NavigationProps> = ({ logo, title, navigation }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [aiModel, setAIModel] = useState<string>("gemini-2.0-flash");
 
-  const getAIModel = (e: React.SyntheticEvent) => {
-    setAIModel((e.target as HTMLInputElement).value);
-  };
+const getAIModel = (model: string) => {
+  setAIModel(model);
+};
 
   useEffect(() => {
     const handleResize = () => {
