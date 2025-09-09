@@ -26,11 +26,6 @@ export interface HandleNestedImageUploadParams {
   handleFileUpload: (file: File) => Promise<string | null>;
 }
 
-/**
- * Reusable helper for nested image uploads in Contentful.
- * Updates preview immediately, uploads the file, updates `nestedSchemas`,
- * and pushes the uploaded asset to `fieldsToSendRef`.
- */
 export const handleNestedImageUpload = async ({
   file,
   schemaKey,

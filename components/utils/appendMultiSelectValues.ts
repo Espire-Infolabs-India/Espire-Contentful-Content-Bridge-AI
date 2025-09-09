@@ -1,11 +1,5 @@
 // src/utils/appendMultiSelectValues.ts
-import { Field } from "../types";
-
-/**
- * Append multi-select values to fieldsToSend.
- * - fieldsToSend is mutated in-place.
- * - getFullPathFromResult must return a string (fallback to key).
- */
+import { Field } from "../props";
 export function appendMultiSelectValues(
   fieldsToSend: Field[],
   multiSelectValues: Record<string, any[]> | undefined,

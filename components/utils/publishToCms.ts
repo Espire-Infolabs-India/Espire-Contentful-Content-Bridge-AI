@@ -1,9 +1,9 @@
-// src/utils/cms.ts
 import axios from "axios";
 
-const SPACE_ID = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
-const ENVIRONMENT = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
-const TOKEN = process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
+// ✅ Exported constants for other files to use
+export const SPACE_ID = process.env.NEXT_PUBLIC_CONTENTFUL_SPACE_ID;
+export const ENVIRONMENT = process.env.NEXT_PUBLIC_CONTENTFUL_ENVIRONMENT || "dev";
+export const TOKEN = process.env.NEXT_PUBLIC_CONTENTFUL_MANAGEMENT_TOKEN;
 
 const BASE_URL = `https://api.contentful.com/spaces/${SPACE_ID}/environments/${ENVIRONMENT}`;
 

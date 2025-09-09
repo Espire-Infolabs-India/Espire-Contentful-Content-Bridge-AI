@@ -1,7 +1,4 @@
-// src/utils/flattenSchemas.ts
-/**
- * Convert content type schema list into normalized list for backend matching and traversal.
- */
+//utils/flattenSchemas.ts
 export function flattenSchemas(schemaList: any[]): any[] {
   const result: any[] = [];
   const visited = new Set<string>();
