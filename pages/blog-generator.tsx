@@ -2,32 +2,28 @@
 import { useEffect, useRef, useState, FormEvent } from "react";
 import { createContentfulEntry } from "./api/create-entry";
 import { toast } from "react-toastify";
-import AssetPicker from "@/components/content-form/AssetPicker";
-import MultiSelectDropdown from "@/components/content-form/MultiSelectDropdown";
-import ImageUploadWithPreview from "@/components/content-form/ImageUploadWithPreview";
-import FieldValueEditor from "@/components/content-form/FieldValueEditor";
-import ActionButtons from "@/components/content-form/ActionButtons";
-import useAssetPicker from "@/components/content-form/useAssetPicker";
-import GenerateContentBlock from "@/components/content-form/GenerateContentBlock";
-import UploadedDetails from "@/components/content-form/UploadedDetails";
-import SuccessPage from "@/components/content-form/SuccessPage";
-import RootFieldRenderer from "@/components/content-form/RootFieldRenderer";
-import { collectFormFields } from "@/components/utils/collectFormFields";
-import {
-  getEntry,
-  getNestedEntryIds,
-  publishEntry,
-} from "@/components/utils/cms";
+import AssetPicker from "@/components/helpers/AssetPicker";
+import MultiSelectDropdown from "@/components/helpers/MultiSelectDropdown";
+import ImageUploadWithPreview from "@/components/helpers/ImageUploadWithPreview";
+import FieldValueEditor from "@/components/helpers/FieldValueEditor";
+import ActionButtons from "@/components/helpers/PublishAndSaveButton";
+import useAssetPicker from "@/components/hooks/useAssetPicker";
+import GenerateContentBlock from "@/components/helpers/GenerateContentBlock";
+import UploadedDetails from "@/components/helpers/UploadDetails";
+import SuccessPage from "@/components/helpers/SuccessPage";
+import RootFieldRenderer from "@/components/helpers/RootFieldRenderer";
+import { collectFormFields } from "@/components/utils/collectDataFromFields";
+import { getEntry, publishEntry, getNestedEntryIds, SPACE_ID, ENVIRONMENT }  from "@/components/utils/publishToCms";
 import { appendMultiSelectValues } from "@/components/utils/appendMultiSelectValues";
 import { normalizeAIResult } from "@/components/utils/normalizeAIResult";
 import { appendNestedImages } from "@/components/utils/appendNestedImages";
 import { flattenSchemas } from "@/components/utils/flattenSchemas";
-import { prefixAndSeparateFields } from "@/components/utils/prefixAndSeparateFields";
-import { getFullPathFromResult } from "@/components/utils/getFullPathFromResult";
-import { uploadFileToContentful } from "@/components/utils/cms";
-import { handleNestedImageUpload } from "@/components/utils/NestedHelpers";
-import { NestedSchema } from "@/components/utils/NestedHelpers";
-import ContentUploader from "@/components/content-form/ContentUploadCard";
+import { prefixAndSeparateFields } from "@/components/utils/fieldSeperationRendering";
+import { getFullPathFromResult } from "@/components/utils/extractFullPath";
+import { uploadFileToContentful } from "@/components/utils/publishToCms";
+import { handleNestedImageUpload } from "@/components/utils/nestedImageUpload";
+import { NestedSchema } from "@/components/utils/nestedImageUpload";
+import ContentUploader from "@/components/helpers/ImportPdforUrl";
 
 interface Field {
   key: string;
@@ -96,16 +92,17 @@ export default function HomePage() {
     setUploads(false);
     setSucessPage(false);
   };
-  const setSuccess: () => void = () => {
-    setURL("");
-    setFileName("");
-    setFileSize(0);
-    setSelectedFile(null);
-    setSecondPage(false);
-    setFirstPage(false);
-    setUploads(false);
-    setSucessPage(true);
-  };
+const resetToNewContent = () => {
+  setURL("");
+  setFileName("");
+  setFileSize(0);
+  setSelectedFile(null);
+  setSecondPage(false);
+  setFirstPage(true); // go back to first page
+  setShowGeneratedResult(false);
+  setSucessPage(false);
+  setFinalResult(null);
+};
 
   const setUploads = (val: any): void => {
     setUploadedDetails(val);
@@ -529,33 +526,56 @@ export default function HomePage() {
       setLoading(false);
     }
   };
+const publishToCMS = async () => {
+  if (!entryId) return alert("No draft entry found to publish.");
 
-  const publishToCMS = async () => {
-    if (!entryId) return alert("No draft entry found to publish.");
+  try {
+    setLoading(true);
 
-    try {
-      setLoading(true);
+    // Get main entry
+    const entryData = await getEntry(entryId);
+    const latestVersion = entryData.sys.version;
 
-      const entryData = await getEntry(entryId);
-      const latestVersion = entryData.sys.version;
-      const nestedIds = getNestedEntryIds(entryData);
-      for (const id of nestedIds) {
-        try {
-          const nestedData = await getEntry(id);
-          await publishEntry(id, nestedData.sys.version);
-        } catch (err) {
-          console.warn(` Failed to publish nested entry ${id}`, err);
-        }
+    // Publish nested entries first
+    const nestedIds = getNestedEntryIds(entryData);
+    for (const id of nestedIds) {
+      try {
+        const nestedData = await getEntry(id);
+        await publishEntry(id, nestedData.sys.version);
+      } catch (err) {
+        console.warn(`Failed to publish nested entry ${id}`, err);
       }
-      await publishEntry(entryId, latestVersion);
-      alert("✅ Entry and nested entries published!");
-    } catch (err) {
-      console.error(err);
-      alert("❌ Failed to publish to CMS.");
-    } finally {
-      setLoading(false);
     }
-  };
+
+    // Publish main entry
+    await publishEntry(entryId, latestVersion);
+
+    // ✅ Build Contentful entry URL
+    const entryUrl = `https://app.contentful.com/spaces/${SPACE_ID}/environments/${ENVIRONMENT}/entries/${entryId}`;
+
+    // ✅ Show Success Page
+    setFinalResult({
+      entry: {
+        title: entryData.fields?.title?.["en-US"] || "Untitled Entry",
+        url: entryUrl,
+        summary: "Entry published successfully!",
+      },
+    });
+
+    setFirstPage(false);
+    setSecondPage(false);
+    setShowGeneratedResult(false);
+    setSucessPage(true); // <--- this will render your SuccessPage
+
+  } catch (err) {
+    console.error(err);
+    alert("Failed to publish entry.");
+  } finally {
+    setLoading(false);
+  }
+};
+
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const input = e.target as HTMLInputElement;
@@ -1012,7 +1032,7 @@ export default function HomePage() {
           title={finalResult?.entry?.title || ""}
           url={finalResult?.entry?.url || ""}
           summary={finalResult?.entry?.summary || ""}
-          onNewContent={setSuccess}
+          onNewContent={resetToNewContent}
         />
       )}
     </div>

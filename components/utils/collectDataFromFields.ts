@@ -1,5 +1,5 @@
 // src/utils/collectFormFields.ts
-import { Field } from "../types";
+import { Field } from "../props";
 
 /**
  * Collect textareas, checkboxes and dropdowns from DOM into Field[]

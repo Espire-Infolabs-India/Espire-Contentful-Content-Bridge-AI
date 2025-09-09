@@ -1,5 +1,5 @@
 // src/utils/prefixAndSeparateFields.ts
-import { Field } from "../types";
+import { Field } from "../props";
 
 export function prefixAndSeparateFields(
   fieldsToSendInput: Field[],

@@ -1,5 +1,5 @@
 // src/utils/normalizeAIResult.ts
-import { Field } from "../types";
+import { Field } from "../props";
 
 /**
  * Normalize AI result object / array into fields and append to fieldsToSend.

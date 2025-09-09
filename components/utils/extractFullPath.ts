@@ -1,8 +1,5 @@
 // src/utils/getFullPathFromResult.ts
-/**
- * Returns the full dot-notation path for a key inside the 'result' grouped structure.
- * Always returns a string (falls back to the key).
- */
+
 export function getFullPathFromResult(result: any, key: string): string {
   if (!result || typeof result !== "object") return key;
 

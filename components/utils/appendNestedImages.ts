@@ -1,9 +1,5 @@
-// src/utils/appendNestedImages.ts
-import { Field } from "../types";
-
-/**
- * Push uploaded image and nested images (from nestedSchemas) into fieldsToSend.
- */
+//utils/appendNestedImages.ts
+import { Field } from "../props";
 export function appendNestedImages(
   fieldsToSend: Field[],
   uploadedImageId: string | undefined,
