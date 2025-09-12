@@ -523,14 +523,13 @@ export const createContentfulEntry = async (
           fieldValue["en-US"] !== undefined
         ) {
           let value = fieldValue["en-US"];
-
-          // Schema lookup
           const schemaField = allSchemaObjects.find(
             (s) => s.id === key || s.uid === key
           );
+
           if (
             (schemaField?.type === "RichText" ||
-              ["description", "content"].includes(key)) &&
+              ["description", "content", "shortBio"].includes(key)) &&
             typeof value === "string"
           ) {
             fieldValue["en-US"] = {
@@ -553,19 +552,22 @@ export const createContentfulEntry = async (
             };
             continue;
           }
-
-          //  Auto-wrap array of strings as Links
           if (
             Array.isArray(value) &&
             value.every((v) => typeof v === "string")
           ) {
-            fieldValue["en-US"] = value.map((id) => ({
-              sys: { type: "Link", linkType: "Entry", id },
-            }));
+            if (key === "cta" || fieldValue.actual_key === "cta") {
+              fieldValue["en-US"] = {
+                sys: { type: "Link", linkType: "Entry", id: value[0] },
+              };
+            } else {
+              fieldValue["en-US"] = value.map((id) => ({
+                sys: { type: "Link", linkType: "Entry", id },
+              }));
+            }
             continue;
           }
-
-          // ✅ Date normalization
+          // Date normalization
           if (
             (schemaField?.type === "Date" ||
               key.toLowerCase().includes("date")) &&
@@ -641,7 +643,7 @@ export const createContentfulEntry = async (
     // Call recursive normalizer BEFORE sending payload
     normalizeFields(finalPayload.fields);
 
-    // STEP 4: Create main entry
+    // Create main entry
     const response = await axios.post(url, finalPayload, {
       headers: {
         Authorization: `Bearer ${managementToken}`,
@@ -651,7 +653,7 @@ export const createContentfulEntry = async (
     });
 
     const createdMainEntry = response.data;
-    // STEP 5: Publish main entry if required
+    // Publish main entry if required
     if (publish) {
       const publishResponse = await axios.put(
         `https://api.contentful.com/spaces/${spaceId}/environments/${environmentId}/entries/${createdMainEntry.sys.id}/published`,

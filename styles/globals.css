@@ -139,6 +139,12 @@ button.primary-button:hover svg path {
   @apply text-[13px] font-normal leading-[20px];
 }
 
+/* in globals.css or a dedicated toast.css */
+.Toastify__toast-container {
+  z-index: 2147483647 !important; /* highest safe value */
+}
+
+
 }
 /* Custom CSS Variables */
 :root {

@@ -28,23 +28,7 @@ export default function Home() {
   }, []);
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h2>Contentful Stack Info</h2>
 
-      {loading && <p>Loading...</p>}
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      {contentfulData && (
-        <>
-          <h3>Space Name: {contentfulData.spaceName}</h3>
-          <h3>Space ID: {contentfulData.spaceId}</h3>
-          <h3>Environment: {contentfulData.environmentId}</h3>
-          <h3>Delivery Token: {contentfulData.deliveryToken}</h3>
-        </>
-      )}
-
-      <hr style={{ margin: "2rem 0" }} />
-      <BlogGenerator /> {/* ✅ updated component */}
-    </div>
+      <BlogGenerator />
   );
 }

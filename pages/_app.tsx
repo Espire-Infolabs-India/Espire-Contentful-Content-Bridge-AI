@@ -100,6 +100,19 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
         <ThemeProvider theme={theme}>
           <CssBaseline />
           <Component {...pageProps} />
+          {/* ✅ ToastContainer inside Contentful too */}
+          <ToastContainer
+            position="top-right"
+            autoClose={3000}
+            hideProgressBar={false}
+            newestOnTop={false}
+            closeOnClick
+            rtl={false}
+            pauseOnFocusLoss
+            draggable
+            pauseOnHover
+            theme="colored"
+          />
         </ThemeProvider>
       </SDKProvider>
     );
@@ -131,7 +144,7 @@ export default function App(props: AppProps & Props & { entries: EntryData[] }) 
         </ThemeProvider>
       </Layout>
 
-      {/* ✅ Add ToastContainer at the root */}
+      {/* ✅ ToastContainer at root level for normal mode */}
       <ToastContainer
         position="top-right"
         autoClose={3000}

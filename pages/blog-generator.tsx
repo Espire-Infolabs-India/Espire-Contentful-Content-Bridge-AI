@@ -24,12 +24,14 @@ import { uploadFileToContentful } from "@/components/utils/publishToCms";
 import { handleNestedImageUpload } from "@/components/utils/nestedImageUpload";
 import { NestedSchema } from "@/components/utils/nestedImageUpload";
 import ContentUploader from "@/components/helpers/ImportPdforUrl";
+import Loader from"@/components/helpers/Loader";
 
 interface Field {
   key: string;
   actual_key: string;
   value: any;
 }
+
 let allowedFields: string[] = [];
 export default function HomePage() {
   const fieldsToSendRef = useRef<any[]>([]);
@@ -66,8 +68,6 @@ export default function HomePage() {
   const [uploadedDetails, setUploadedDetails] = useState(false);
   const [sucessPage, setSucessPage] = useState(false);
   const [finalResult, setFinalResult] = useState<any>(null);
-  const [baseUrl, setBaseUrl] = useState<string>("");
-  const [isModalOpen, setModalOpen] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<any>(null);
   const [schema, setSchema] = useState<any[]>([]);
 
@@ -1014,18 +1014,24 @@ const publishToCMS = async () => {
         }
         url={url}
       />
-      {secondPage && (
-        <GenerateContentBlock
-          template={template}
-          setTemplate={setTemplate}
-          contentTypes={contentTypeResult?.content_types || []}
-          selectedFile={selectedFile}
-          url={url}
-          loading={loading}
-          onGenerate={generateContent}
-          onCancel={setCancel}
-        />
-      )}
+     {secondPage && (
+  <>
+    {/* Loader overlay while content is generating */}
+    <Loader isLoading={loading} />
+
+    <GenerateContentBlock
+      template={template}
+      setTemplate={setTemplate}
+      contentTypes={contentTypeResult?.content_types || []}
+      selectedFile={selectedFile}
+      url={url}
+      loading={loading}
+      onGenerate={generateContent}
+      onCancel={setCancel}
+    />
+  </>
+)}
+
       {showGeneratedResult && renderResult()}
       {sucessPage && (
         <SuccessPage
