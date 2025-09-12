@@ -108,6 +108,18 @@ export default async function handler(req, res) {
       const simplifiedSchema = [];
 
       for (const field of contentTypeSchema) {
+        if (field.type === "Link" && Array.isArray(field.nestedFields)) {
+          for (const nested of field.nestedFields) {
+            simplifiedSchema.push({
+              reference: `${field.id}.${nested.from}.${nested.id}`,
+              display_name: nested.display_name,
+              helpText: nested.helpText,
+              group: field.id,
+              group_display_name: field.display_name,
+            });
+          }
+          continue;
+        }
         // Case 1: Normal flat fields
         if (!field.type || field.type !== "Array") {
           simplifiedSchema.push({
