@@ -60,7 +60,6 @@ function convertToRichText(text: string) {
   };
 }
 
-// Recursively inject user-selected entries into fields
 function injectUserSelections(
   fields: any[],
   multiSelectValues: Record<string, string[]>
@@ -176,7 +175,6 @@ const createNestedEntry = async (
 
   return createdEntry;
 };
-// Helper: Collect all fields that are Array of Links from schema
 function getArrayLinkFields(allSchemaObjects: any[]): string[] {
   const arrayFields: string[] = [];
   for (const schemaField of allSchemaObjects) {
@@ -217,7 +215,6 @@ export const createContentfulEntry = async (
       fields: {},
     };
 
-    // Prepare schema references
     let allSchemaObjects: any[] = [...contentTypeSchemas];
     const rootGlobalFields =
       contentTypeSchemas.filter((f) => f.data_type === "global_field") || [];
@@ -231,7 +228,6 @@ export const createContentfulEntry = async (
       }))
     );
     allSchemaObjects = allSchemaObjects.concat(rootGlobalFieldsArray);
-    // STEP 2: Build incomingNestedSchemas from both array-style and direct nested object values
     const groupedArrayFields = fields.reduce((acc, field) => {
       const match = field.actual_key.match(
         /^([a-zA-Z0-9_]+)\[(\d+)\]\[([a-zA-Z0-9_]+)\]$/
@@ -247,7 +243,6 @@ export const createContentfulEntry = async (
       }
       return acc;
     }, {} as Record<string, any[]>);
-    //Remove flattened subfield keys
     for (const key of Object.keys(groupedArrayFields)) {
       for (let i = fields.length - 1; i >= 0; i--) {
         if (fields[i].actual_key.startsWith(`${key}[`)) {
@@ -255,13 +250,9 @@ export const createContentfulEntry = async (
         }
       }
     }
-
-    // Add grouped entries back as flat object-style values
     for (const [key, entries] of Object.entries(groupedArrayFields)) {
       fields.push({ actual_key: key, value: entries });
     }
-
-    // Also handle object-style nested arrays like productPageSeo: [{ title: ..., description: ... }]
     fields.forEach((field) => {
       const { actual_key, value } = field;
       const alreadyGrouped = groupedArrayFields[actual_key];
@@ -275,8 +266,6 @@ export const createContentfulEntry = async (
         groupedArrayFields[actual_key] = value;
       }
     });
-
-    // Dynamically detect array-of-link fields from schema
     const arrayLinkFields = getArrayLinkFields(allSchemaObjects);
     for (const field of fields) {
       const { actual_key, value } = field;
@@ -328,7 +317,6 @@ export const createContentfulEntry = async (
         }
       }
     }
-    // Build nestedSchemas structure
     const builtNestedSchemas = Object.entries(groupedArrayFields).reduce(
       (acc, [key, entries]) => {
         const schemaField = allSchemaObjects.find(
@@ -351,8 +339,6 @@ export const createContentfulEntry = async (
           console.warn(` No linked content type found for "${key}"`);
           return acc;
         }
-
-        // Attempt to resolve nestedFields
         let nestedFields = schemaField?.nestedFields;
         if (!nestedFields && contentTypeId) {
           const childType =
@@ -389,15 +375,12 @@ export const createContentfulEntry = async (
     );
 
     const nestedSchemas = { ...incomingNestedSchemas, ...builtNestedSchemas };
-
-    // STEP 1: Create all nested entries first
     const nestedEntryLinks: Record<string, any[]> = {};
     for (const [fieldKey, schema] of Object.entries(nestedSchemas)) {
       if (!Array.isArray(schema.entries)) continue;
       if (!nestedEntryLinks[fieldKey]) nestedEntryLinks[fieldKey] = [];
       for (const entryFields of schema.entries) {
-        //Step 3A: Inject user selections for Link-type fields
-        const selectedIds = multiSelectValues[fieldKey]; // array of selected entry IDs
+        const selectedIds = multiSelectValues[fieldKey];
         if (selectedIds && selectedIds.length > 0) {
           for (const [nestedFieldKey, nestedFieldValue] of Object.entries(
             entryFields
@@ -410,7 +393,6 @@ export const createContentfulEntry = async (
               );
             if (!schemaField) continue;
             if (schemaField.type === "Link") {
-              // Single reference
               entryFields[nestedFieldKey] = {
                 sys: { type: "Link", linkType: "Entry", id: nestedFieldValue },
               };
@@ -418,7 +400,6 @@ export const createContentfulEntry = async (
               schemaField.type === "Array" &&
               schemaField.items?.type === "Link"
             ) {
-              // Array of references
               const ids = Array.isArray(nestedFieldValue)
                 ? nestedFieldValue
                 : [nestedFieldValue];
@@ -428,7 +409,6 @@ export const createContentfulEntry = async (
             }
           }
         }
-
         const nestedEntry = await createNestedEntry(
           schema.contentTypeId,
           entryFields,
@@ -490,11 +470,9 @@ export const createContentfulEntry = async (
       actual_key: key,
       value,
     }));
-    // Build payload from finalFields
     const finalPayload = {
       fields: finalFields.reduce((acc, field) => {
         let value = field.value;
-        // normalize numbers
         if (
           !isNaN(value) &&
           value !== "" &&
@@ -508,7 +486,14 @@ export const createContentfulEntry = async (
         } else if (value === "false" || value === false) {
           value = false;
         }
-        acc[field.actual_key] = { "en-US": value };
+        acc[field.actual_key] = {
+          "en-US":
+            field.actual_key === "variants" && !Array.isArray(value)
+              ? [String(value)]
+              : field.actual_key === "variants" && Array.isArray(value)
+              ? value.map((v) => String(v))
+              : value,
+        };
         return acc;
       }, {} as Record<string, any>),
     };
@@ -560,7 +545,12 @@ export const createContentfulEntry = async (
               fieldValue["en-US"] = {
                 sys: { type: "Link", linkType: "Entry", id: value[0] },
               };
-            } else {
+            }
+            // 🚨 Exclude "variants" from being converted into Links
+            else if (
+              key !== "variants" &&
+              fieldValue.actual_key !== "variants"
+            ) {
               fieldValue["en-US"] = value.map((id) => ({
                 sys: { type: "Link", linkType: "Entry", id },
               }));
@@ -639,8 +629,6 @@ export const createContentfulEntry = async (
         }
       }
     }
-
-    // Call recursive normalizer BEFORE sending payload
     normalizeFields(finalPayload.fields);
 
     // Create main entry

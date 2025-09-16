@@ -13,7 +13,13 @@ import UploadedDetails from "@/components/helpers/UploadDetails";
 import SuccessPage from "@/components/helpers/SuccessPage";
 import RootFieldRenderer from "@/components/helpers/RootFieldRenderer";
 import { collectFormFields } from "@/components/utils/collectDataFromFields";
-import { getEntry, publishEntry, getNestedEntryIds, SPACE_ID, ENVIRONMENT }  from "@/components/utils/publishToCms";
+import {
+  getEntry,
+  publishEntry,
+  getNestedEntryIds,
+  SPACE_ID,
+  ENVIRONMENT,
+} from "@/components/utils/publishToCms";
 import { appendMultiSelectValues } from "@/components/utils/appendMultiSelectValues";
 import { normalizeAIResult } from "@/components/utils/normalizeAIResult";
 import { appendNestedImages } from "@/components/utils/appendNestedImages";
@@ -24,14 +30,13 @@ import { uploadFileToContentful } from "@/components/utils/publishToCms";
 import { handleNestedImageUpload } from "@/components/utils/nestedImageUpload";
 import { NestedSchema } from "@/components/utils/nestedImageUpload";
 import ContentUploader from "@/components/helpers/ImportPdforUrl";
-import Loader from"@/components/helpers/Loader";
+import Loader from "@/components/helpers/Loader";
 
 interface Field {
   key: string;
   actual_key: string;
   value: any;
 }
-
 let allowedFields: string[] = [];
 export default function HomePage() {
   const fieldsToSendRef = useRef<any[]>([]);
@@ -68,6 +73,8 @@ export default function HomePage() {
   const [uploadedDetails, setUploadedDetails] = useState(false);
   const [sucessPage, setSucessPage] = useState(false);
   const [finalResult, setFinalResult] = useState<any>(null);
+  const [baseUrl, setBaseUrl] = useState<string>("");
+  const [isModalOpen, setModalOpen] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<any>(null);
   const [schema, setSchema] = useState<any[]>([]);
 
@@ -92,17 +99,17 @@ export default function HomePage() {
     setUploads(false);
     setSucessPage(false);
   };
-const resetToNewContent = () => {
-  setURL("");
-  setFileName("");
-  setFileSize(0);
-  setSelectedFile(null);
-  setSecondPage(false);
-  setFirstPage(true); // go back to first page
-  setShowGeneratedResult(false);
-  setSucessPage(false);
-  setFinalResult(null);
-};
+  const resetToNewContent = () => {
+    setURL("");
+    setFileName("");
+    setFileSize(0);
+    setSelectedFile(null);
+    setSecondPage(false);
+    setFirstPage(true); // go back to first page
+    setShowGeneratedResult(false);
+    setSucessPage(false);
+    setFinalResult(null);
+  };
 
   const setUploads = (val: any): void => {
     setUploadedDetails(val);
@@ -332,7 +339,7 @@ const resetToNewContent = () => {
         filteredSummary = Object.entries(data.result)
           .map(([key, rawValue], index) => {
             let value: any = rawValue;
-            if (key.toLowerCase().includes("image")) {
+            if (key.toLowerCase().endsWith("image")) {
               value = null;
             }
             let isErrorObject: boolean = false;
@@ -376,7 +383,7 @@ const resetToNewContent = () => {
               );
               return null;
             }
-            if (key.toLowerCase().includes("image")) {
+            if (key.toLowerCase().endsWith("image")) {
               return {
                 key,
                 actual_key: key,
@@ -432,7 +439,9 @@ const resetToNewContent = () => {
             flatValue = JSON.stringify(value);
           }
         }
-
+        if (typeof flatValue === "string" && flatValue.startsWith("/")) {
+          flatValue = flatValue.replace(/^\/+/, "");
+        }
         return {
           ...item,
           value: flatValue,
@@ -491,7 +500,7 @@ const resetToNewContent = () => {
                 field &&
                 typeof field === "object" &&
                 typeof field.actual_key === "string" &&
-                field.actual_key.toLowerCase().includes("image")
+                field.actual_key.toLowerCase().endsWith("image")
               ) {
                 console.warn(
                   ` Removing AI-generated value for nested image field "${field.actual_key}"`
@@ -526,55 +535,53 @@ const resetToNewContent = () => {
       setLoading(false);
     }
   };
-const publishToCMS = async () => {
-  if (!entryId) return alert("No draft entry found to publish.");
+  const publishToCMS = async () => {
+    if (!entryId) return alert("No draft entry found to publish.");
 
-  try {
-    setLoading(true);
+    try {
+      setLoading(true);
 
-    // Get main entry
-    const entryData = await getEntry(entryId);
-    const latestVersion = entryData.sys.version;
+      // Get main entry
+      const entryData = await getEntry(entryId);
+      const latestVersion = entryData.sys.version;
 
-    // Publish nested entries first
-    const nestedIds = getNestedEntryIds(entryData);
-    for (const id of nestedIds) {
-      try {
-        const nestedData = await getEntry(id);
-        await publishEntry(id, nestedData.sys.version);
-      } catch (err) {
-        console.warn(`Failed to publish nested entry ${id}`, err);
+      // Publish nested entries first
+      const nestedIds = getNestedEntryIds(entryData);
+      for (const id of nestedIds) {
+        try {
+          const nestedData = await getEntry(id);
+          await publishEntry(id, nestedData.sys.version);
+        } catch (err) {
+          console.warn(`Failed to publish nested entry ${id}`, err);
+        }
       }
+
+      // Publish main entry
+      await publishEntry(entryId, latestVersion);
+
+      // ✅ Build Contentful entry URL
+      const entryUrl = `https://app.contentful.com/spaces/${SPACE_ID}/environments/${ENVIRONMENT}/entries/${entryId}`;
+
+      // ✅ Show Success Page
+      setFinalResult({
+        entry: {
+          title: entryData.fields?.title?.["en-US"] || "Untitled Entry",
+          url: entryUrl,
+          summary: "Entry published successfully!",
+        },
+      });
+
+      setFirstPage(false);
+      setSecondPage(false);
+      setShowGeneratedResult(false);
+      setSucessPage(true); // <--- this will render your SuccessPage
+    } catch (err) {
+      console.error(err);
+      alert("Failed to publish entry.");
+    } finally {
+      setLoading(false);
     }
-
-    // Publish main entry
-    await publishEntry(entryId, latestVersion);
-
-    // ✅ Build Contentful entry URL
-    const entryUrl = `https://app.contentful.com/spaces/${SPACE_ID}/environments/${ENVIRONMENT}/entries/${entryId}`;
-
-    // ✅ Show Success Page
-    setFinalResult({
-      entry: {
-        title: entryData.fields?.title?.["en-US"] || "Untitled Entry",
-        url: entryUrl,
-        summary: "Entry published successfully!",
-      },
-    });
-
-    setFirstPage(false);
-    setSecondPage(false);
-    setShowGeneratedResult(false);
-    setSucessPage(true); // <--- this will render your SuccessPage
-
-  } catch (err) {
-    console.error(err);
-    alert("Failed to publish entry.");
-  } finally {
-    setLoading(false);
-  }
-};
-
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
@@ -1014,23 +1021,23 @@ const publishToCMS = async () => {
         }
         url={url}
       />
-     {secondPage && (
-  <>
-    {/* Loader overlay while content is generating */}
-    <Loader isLoading={loading} />
+      {secondPage && (
+        <>
+          {/* Loader overlay while content is generating */}
+          <Loader isLoading={loading} />
 
-    <GenerateContentBlock
-      template={template}
-      setTemplate={setTemplate}
-      contentTypes={contentTypeResult?.content_types || []}
-      selectedFile={selectedFile}
-      url={url}
-      loading={loading}
-      onGenerate={generateContent}
-      onCancel={setCancel}
-    />
-  </>
-)}
+          <GenerateContentBlock
+            template={template}
+            setTemplate={setTemplate}
+            contentTypes={contentTypeResult?.content_types || []}
+            selectedFile={selectedFile}
+            url={url}
+            loading={loading}
+            onGenerate={generateContent}
+            onCancel={setCancel}
+          />
+        </>
+      )}
 
       {showGeneratedResult && renderResult()}
       {sucessPage && (
