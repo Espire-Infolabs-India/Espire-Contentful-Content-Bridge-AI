@@ -230,7 +230,7 @@ ${contentForAzure}
             blob_url: contentForAzure,
             user_prompt:
               "Rewrite in a more engaging style, but maintain all important details.",
-            brand_url: "https://www.oki.com/global/profile/brand/",
+            brand_url: "https://www.kohler.co.in/press-room/ultimate-smart-press-release",
             content_type: simplifiedSchema,
           },
           {
