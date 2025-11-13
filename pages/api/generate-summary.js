@@ -230,7 +230,7 @@ ${contentForAzure}
             blob_url: contentForAzure,
             user_prompt:
               "Rewrite in a more engaging style, but maintain all important details.",
-            brand_url: "https://www.kohler.co.in/press-room/ultimate-smart-press-release",
+            brand_url: "https://careers.inspirebrands.com/life-at-inspire",
             content_type: simplifiedSchema,
           },
           {
