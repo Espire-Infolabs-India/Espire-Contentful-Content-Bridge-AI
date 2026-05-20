@@ -661,6 +661,34 @@ export const createContentfulEntry = async (
       " Error creating entry:",
       error?.response?.data || error?.message || error
     );
+
     throw error;
   }
 };
+
+// ... your existing createContentfulEntry function ends above
+
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Method not allowed' });
+  }
+
+  try {
+    const { fields, contentTypeId, publish, contentTypeSchemas, nestedSchemas, multiSelectValues } = req.body;
+
+    const result = await createContentfulEntry(
+      fields,
+      contentTypeId,
+      publish,
+      contentTypeSchemas,
+      nestedSchemas,
+      multiSelectValues
+    );
+
+    return res.status(200).json(result);
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Something went wrong' });
+  }
+}
