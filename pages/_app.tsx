@@ -7,14 +7,18 @@ import Head from 'next/head';
 import Layout from '@/components/layout';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import { createTheme } from '@mui/material/styles';
+// @ts-ignore: Allow side-effect CSS import without type declarations
 import 'nprogress/nprogress.css';
+// @ts-ignore: Allow side-effect CSS import without type declarations
 import '../styles/third-party.css';
+// @ts-ignore: Allow side-effect CSS import without type declarations
 import '../styles/globals.css';
 import type { AppProps } from 'next/app';
 import { Props } from "../typescript/pages";
 import { EntryData, PageProps, Posts } from "../typescript/layout";
 
 import { ToastContainer } from 'react-toastify'; // ✅ import ToastContainer
+// @ts-ignore: Allow side-effect CSS import without type declarations
 import 'react-toastify/dist/ReactToastify.css';  // ✅ import styles
 
 const theme = createTheme({
